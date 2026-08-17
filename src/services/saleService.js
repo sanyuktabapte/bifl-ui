@@ -1,4 +1,4 @@
-const API_BASE_URL = 'http://localhost:8080/api/sales';
+const API_BASE_URL = `http://${window.location.hostname}:8080/api/sales`;
 
 export const fetchAllSaleOrders = async () => {
     const response = await fetch(`${API_BASE_URL}`);
