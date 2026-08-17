@@ -1,23 +1,20 @@
-import React, { useState, useMemo, useCallback } from 'react';
-import { masterStoreList, masterFlavourList, storeOrders } from '../../../assets/mockData';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { masterStoreList as initialStores, masterFlavourList as initialFlavours, storeOrders as initialStoreOrders } from '../../../assets/mockData';
 import OrderModal from './OrderModal';
 import jsPDF from 'jspdf';
-import AutocompleteInput from '../../../components/common/AutocompleteInput'; // Assuming FlavourInput is now AutocompleteInput
+import AutocompleteInput from '../../../components/common/AutocompleteInput';
 import 'jspdf-autotable';
+import { fetchActiveOrders, createStoreOrderApi, updateStoreOrderApi, deleteStoreOrderApi } from '../../../services/storeOrderService';
+import { fetchAdminDashboard } from '../../../services/adminService';
 
 function StoreOrderPage() {
-    const [orders, setOrders] = useState(storeOrders);
+    const navigate = useNavigate();
+    const [orders, setOrders] = useState([]);
+    const [stores, setStores] = useState([]);
+    const [flavours, setFlavours] = useState([]);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingOrder, setEditingOrder] = useState(null);
-
-    const handleOpenModal = useCallback(() => {
-        setIsModalOpen(true);
-    }, []);
-
-    const handleCloseModal = useCallback(() => {
-        setEditingOrder(null); // Clear editing state when modal closes
-        setIsModalOpen(false);
-    }, []);
 
     const [filters, setFilters] = useState({
         store: '',
@@ -27,12 +24,45 @@ function StoreOrderPage() {
 
     const [sortConfig, setSortConfig] = useState({ key: 'orderDate', direction: 'descending' });
 
+    // Fetch live backend data
+    const loadBackendData = useCallback(async () => {
+        try {
+            const [activeOrders, adminData] = await Promise.all([
+                fetchActiveOrders().catch(() => null),
+                fetchAdminDashboard().catch(() => null)
+            ]);
+
+            if (adminData) {
+                if (adminData.storeList && adminData.storeList.length > 0) setStores(adminData.storeList);
+                if (adminData.flavourList && adminData.flavourList.length > 0) setFlavours(adminData.flavourList);
+            }
+
+            if (activeOrders !== null) {
+                setOrders(activeOrders);
+            }
+        } catch (err) {
+            console.error("Backend error loading store orders, using mock fallback:", err);
+        }
+    }, []);
+
+    useEffect(() => {
+        loadBackendData();
+    }, [loadBackendData]);
+
+    const handleOpenModal = useCallback(() => {
+        setIsModalOpen(true);
+    }, []);
+
+    const handleCloseModal = useCallback(() => {
+        setEditingOrder(null);
+        setIsModalOpen(false);
+    }, []);
+
     const filteredAndSortedOrders = useMemo(() => {
         let filteredItems = [...orders];
 
-        // Apply filters
         if (filters.store) {
-            filteredItems = filteredItems.filter(order => order.store === filters.store);
+            filteredItems = filteredItems.filter(order => order.store === filters.store || (order.store && order.store.includes(filters.store)));
         }
         if (filters.fromDate) {
             filteredItems = filteredItems.filter(order => new Date(order.orderDate) >= new Date(filters.fromDate));
@@ -41,16 +71,13 @@ function StoreOrderPage() {
             filteredItems = filteredItems.filter(order => new Date(order.orderDate) <= new Date(filters.toDate));
         }
 
-        // Apply sorting to the filtered items
         const sortableItems = [...filteredItems];
         if (sortConfig.key) {
             sortableItems.sort((a, b) => {
-                if (a[sortConfig.key] < b[sortConfig.key]) {
-                    return sortConfig.direction === 'ascending' ? -1 : 1;
-                }
-                if (a[sortConfig.key] > b[sortConfig.key]) {
-                    return sortConfig.direction === 'ascending' ? 1 : -1;
-                }
+                const valA = a[sortConfig.key] || '';
+                const valB = b[sortConfig.key] || '';
+                if (valA < valB) return sortConfig.direction === 'ascending' ? -1 : 1;
+                if (valA > valB) return sortConfig.direction === 'ascending' ? 1 : -1;
                 return 0;
             });
         }
@@ -67,10 +94,7 @@ function StoreOrderPage() {
 
     const getSortIndicator = (name) => {
         if (sortConfig.key === name) {
-            if (sortConfig.direction === 'ascending') {
-                return ' ▲';
-            }
-            return ' ▼';
+            return sortConfig.direction === 'ascending' ? ' ▲' : ' ▼';
         }
         return '';
     };
@@ -93,29 +117,41 @@ function StoreOrderPage() {
         handleOpenModal();
     }, [handleOpenModal]);
 
-    const handleDelete = useCallback((orderId) => {
-        if (window.confirm('Are you sure you want to delete this order?')) {
-            setOrders(prevOrders => prevOrders.filter(order => order.orderId !== orderId));
+    const handleDelete = useCallback(async (orderIdentifier) => {
+        if (!window.confirm('Are you sure you want to delete this order?')) return;
+
+        const targetOrder = orders.find(o => o.id === orderIdentifier || o.orderId === orderIdentifier);
+        const dbId = targetOrder ? targetOrder.id : orderIdentifier;
+
+        try {
+            if (dbId) {
+                await deleteStoreOrderApi(dbId);
+                await loadBackendData();
+            } else {
+                throw new Error("Order ID not found for deletion.");
+            }
+        } catch (err) {
+            console.error("Backend deleteStoreOrder error:", err);
+            alert("Error: Failed to delete order from backend database.");
         }
-    }, []);
+    }, [orders, loadBackendData]);
 
     const handleDownload = useCallback((order) => {
         const doc = new jsPDF();
 
-        // Title
         doc.setFontSize(20);
         doc.text('Store Order', 14, 22);
 
-        // Order Details
         doc.setFontSize(12);
-        doc.text(`Order ID: ${order.orderId}`, 14, 32);
-        doc.text(`Store: ${order.store}`, 14, 38);
-        doc.text(`Date: ${order.orderDate}`, 14, 44);
-        // Table
+        doc.text(`Order ID: ${order.orderId || order.id}`, 14, 32);
+        doc.text(`Store: ${order.store || ''}`, 14, 38);
+        doc.text(`Date: ${order.orderDate || ''}`, 14, 44);
+
         const tableColumn = ["#", "Flavour", "KG", "Dol"];
         const tableRows = [];
 
-        order.flavours.forEach((item, index) => {
+        const flavourItems = order.flavours || [];
+        flavourItems.forEach((item, index) => {
             const dole = Math.floor(parseFloat(item.orderQuantity) / 3) || 0;
             const rowData = [index + 1, item.name, item.orderQuantity, dole];
             tableRows.push(rowData);
@@ -127,20 +163,37 @@ function StoreOrderPage() {
             startY: 50,
         });
 
-        doc.save(`order-${order.orderId}.pdf`);
+        doc.save(`order-${order.orderId || order.id}.pdf`);
     }, []);
 
-    const handleSaveOrder = useCallback((savedOrder) => {
-        const isEditing = orders.some(order => order.orderId === savedOrder.orderId);
-        if (isEditing) {
-            setOrders(orders.map(order => order.orderId === savedOrder.orderId ? savedOrder : order));
-        } else {
-            // When creating a new order, ensure it gets a new, unique ID.
-            const newOrderWithId = { ...savedOrder, orderId: Math.max(0, ...orders.map(o => o.orderId || 0)) + 1 };
-            setOrders([...orders, newOrderWithId]);
+    const handleSaveOrder = useCallback(async (savedOrder) => {
+        const payload = {
+            storeId: savedOrder.storeId,
+            batch: savedOrder.batch || 'NA',
+            orderFlavourList: savedOrder.orderFlavourList || []
+        };
+
+        try {
+            let res;
+            if (savedOrder.id) {
+                res = await updateStoreOrderApi(savedOrder.id, payload);
+            } else {
+                res = await createStoreOrderApi(payload);
+            }
+            handleCloseModal();
+            await loadBackendData();
+
+            if (res && (res.status === 'Ready' || res.status === 'READY')) {
+                if (window.confirm("Order is READY! Would you like to proceed to Sale Operations to process the supply?")) {
+                    navigate("/sale");
+                }
+            }
+        } catch (err) {
+            console.error("Backend error saving store order:", err);
+            alert("Error: Failed to save order to backend database.");
+            handleCloseModal();
         }
-        handleCloseModal();
-    }, [orders, handleCloseModal]);
+    }, [orders, handleCloseModal, loadBackendData, navigate]);
 
     return (
         <div className="container">
@@ -158,7 +211,7 @@ function StoreOrderPage() {
                     <AutocompleteInput
                         value={filters.store}
                         onChange={(value) => handleFilterChange({ target: { name: 'store', value } })}
-                        items={masterStoreList.map(store => store.name)}
+                        items={stores.map(store => store.name)}
                         placeholder="All Stores"
                     />
                 </div>
@@ -184,32 +237,40 @@ function StoreOrderPage() {
                     </tr>
                 </thead>
                 <tbody>
-                    {filteredAndSortedOrders.map(order => (
-                        <tr key={order.orderId}>
-                            <td data-label="Order ID">{order.orderId}</td>
-                            <td data-label="Date">{order.orderDate}</td>
-                            <td data-label="Store">{order.store}</td>
-                            <td data-label="Status"><span className={`status ${order.status.toLowerCase()}`}>{order.status}</span></td>
-                            <td data-label="Actions" className="actions-cell">
-                                {order.status === 'Pending' && (
-                                    <>
-                                        <button className="btn-icon" onClick={() => handleEdit(order)}>Edit</button>
-                                        <button className="btn-icon delete" onClick={() => handleDelete(order.orderId)}>Delete</button>
-                                    </>
-                                )}
-                                <button className="btn-icon download" onClick={() => handleDownload(order)}>Download</button>
+                    {filteredAndSortedOrders.length === 0 ? (
+                        <tr>
+                            <td colSpan="5" style={{ textAlign: 'center', color: 'var(--ink-soft)', padding: '24px', fontStyle: 'italic', fontWeight: '500' }}>
+                                No pending orders
                             </td>
                         </tr>
-                    ))}
+                    ) : (
+                        filteredAndSortedOrders.map(order => (
+                            <tr key={order.id || order.orderId}>
+                                <td data-label="Order ID">{order.orderId || order.id}</td>
+                                <td data-label="Date">{order.orderDate}</td>
+                                <td data-label="Store">{order.store}</td>
+                                <td data-label="Status"><span className={`status ${(order.status || 'pending').toLowerCase()}`}>{order.status}</span></td>
+                                <td data-label="Actions" className="actions-cell">
+                                    {order.status === 'Pending' && (
+                                        <>
+                                            <button className="btn-icon" onClick={() => handleEdit(order)}>Edit</button>
+                                            <button className="btn-icon delete" onClick={() => handleDelete(order.id || order.orderId)}>Delete</button>
+                                        </>
+                                    )}
+                                    <button className="btn-icon download" onClick={() => handleDownload(order)}>Download</button>
+                                </td>
+                            </tr>
+                        ))
+                    )}
                 </tbody>
             </table>
 
             <OrderModal
                 isOpen={isModalOpen}
                 onClose={handleCloseModal}
-                stores={masterStoreList}
+                stores={stores}
                 orders={orders}
-                flavours={masterFlavourList}
+                flavours={flavours}
                 onSave={handleSaveOrder}
                 editingOrder={editingOrder} />
         </div>

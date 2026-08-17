@@ -3,8 +3,11 @@ import { BrowserRouter, Routes, Route, NavLink, Navigate } from 'react-router-do
 import StoreOrderPage from './features/production/store-order/StoreOrderPage';
 import PurchaseOrdersPage from './features/production/purchase-order/PurchaseOrdersPage'; // Corrected path
 import ProductionPlanningPage from './features/production/production-planning/ProductionPlanningPage';
-import SupplyPage from './features/production/supply-order/SupplyPage'; // Corrected path
+import SalePage from './features/production/supply-order/SalePage';
+import BatchesPage from './features/production/batches/BatchesPage';
+import ReportsPage from './features/production/reports/ReportsPage';
 import AdminPage from './features/admin/AdminPage';
+import InternalTransferPage from './features/production/internal-transfer/InternalTransferPage';
 import './App.css';
 
 function App() {
@@ -28,8 +31,10 @@ function App() {
                   <li><NavLink to="/admin">Admin</NavLink></li>
                   <li><NavLink to="/store-orders">Store Orders</NavLink></li>
                   <li><NavLink to="/production-planning">Production Planning</NavLink></li>
-                  <li><NavLink to="/supply">Supply</NavLink></li>
-                  <li><NavLink to="/purchase-orders">Purchase Orders</NavLink></li>
+                   <li><NavLink to="/batches">Batches</NavLink></li>
+                  <li><NavLink to="/internal-transfer">Internal Transfer</NavLink></li>
+                  <li><NavLink to="/sale">Sale</NavLink></li>
+                  <li><NavLink to="/reports">Reports</NavLink></li>
                 </ul>
               </li>
             </ul>
@@ -38,12 +43,14 @@ function App() {
 
         <main className="main-content">
           <Routes>
-             <Route path="/admin" element={<AdminPage />} />
+            <Route path="/admin" element={<AdminPage />} />
             <Route path="/" element={<Navigate replace to="/store-orders" />} />
             <Route path="/store-orders" element={<StoreOrderPage />} />
             <Route path="/production-planning" element={<ProductionPlanningPage />} />
-            <Route path="/supply" element={<SupplyPage />} />
-            <Route path="/purchase-orders" element={<PurchaseOrdersPage />} />
+            <Route path="/batches" element={<BatchesPage />} />
+            <Route path="/internal-transfer" element={<InternalTransferPage />} />
+            <Route path="/sale" element={<SalePage />} />
+            <Route path="/reports" element={<ReportsPage />} />
           </Routes>
         </main>
       </div>

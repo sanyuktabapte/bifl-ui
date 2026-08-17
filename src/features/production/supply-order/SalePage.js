@@ -1,11 +1,14 @@
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
-import { storeOrders, masterStoreList, masterFlavourList } from '../../../assets/mockData';
+import { fetchAllSaleOrders, completeSaleOrderApi, createAndCompleteSaleApi } from '../../../services/saleService';
+import { fetchAdminDashboard } from '../../../services/adminService';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import AutocompleteInput from '../../../components/common/AutocompleteInput';
 
-function SupplyPage() {
-    const [orders, setOrders] = useState(storeOrders);
+function SalePage() {
+    const [orders, setOrders] = useState([]);
+    const [stores, setStores] = useState([]);
+    const [flavours, setFlavours] = useState([]);
     const [filters, setFilters] = useState({ store: '', fromDate: '', toDate: '' });
     const [sortConfig, setSortConfig] = useState({ key: 'orderDate', direction: 'descending' });
 
@@ -17,13 +20,35 @@ function SupplyPage() {
     const flavourInputRefs = useRef([]);
     const kgInputRefs = useRef([]);
 
+    const loadBackendData = useCallback(async () => {
+        try {
+            const [allOrders, adminData] = await Promise.all([
+                fetchAllSaleOrders().catch(() => null),
+                fetchAdminDashboard().catch(() => null)
+            ]);
+
+            if (adminData) {
+                if (adminData.storeList && adminData.storeList.length > 0) setStores(adminData.storeList);
+                if (adminData.flavourList && adminData.flavourList.length > 0) setFlavours(adminData.flavourList);
+            }
+
+            if (allOrders !== null) {
+                setOrders(allOrders);
+            }
+        } catch (err) {
+            console.error("Backend error loading sale page data:", err);
+        }
+    }, []);
+
+    useEffect(() => {
+        loadBackendData();
+    }, [loadBackendData]);
+
     useEffect(() => {
         if (isModalOpen) {
-            // Reset refs on modal open or when items change
             flavourInputRefs.current = flavourInputRefs.current.slice(0, editableItems.length);
             kgInputRefs.current = kgInputRefs.current.slice(0, editableItems.length);
 
-            // Focus the last flavour input if a new row was just added
             if (flavourInputRefs.current[flavourInputRefs.current.length - 1]) {
                 flavourInputRefs.current[flavourInputRefs.current.length - 1].focus();
             }
@@ -51,97 +76,89 @@ function SupplyPage() {
 
     const openSaleModal = (order) => {
         setIsCreating(false);
-        // Deep clone order so we can manipulate it before saving
-        setActiveOrder(JSON.parse(JSON.stringify(order)));
-        // Initialize editable state for the modal table
-        setEditableItems(order.flavours.map(f => ({ ...f, uniqueId: Math.random() })));
+        setActiveOrder({
+            id: order.id,
+            orderId: order.orderId || `SO-${order.id}`,
+            store: order.masterStore?.name || '',
+            storeId: order.masterStore?.id,
+            orderDate: order.orderDate,
+            status: order.status,
+            batch: order.batch || 'NA'
+        });
+        setEditableItems((order.flavours || []).map(f => ({
+            uniqueId: Math.random(),
+            name: f.flavourName || '',
+            code: f.flavourCode || '',
+            orderQuantity: f.orderQuantity || ''
+        })));
         setIsModalOpen(true);
     };
 
-    const handleAddNewSupply = () => {
+    const handleAddNewSale = () => {
         setIsCreating(true);
         setActiveOrder({
-            orderId: `SO-${Date.now()}`, // Temp ID
+            orderId: `SO-${Date.now()}`,
             store: '',
+            storeId: '',
             orderDate: new Date().toISOString().split('T')[0],
             status: 'Pending',
-            flavours: []
+            batch: 'NA'
         });
-        setEditableItems([{ uniqueId: Math.random(), name: '', orderQuantity: '' }]);
+        setEditableItems([{ uniqueId: Math.random(), name: '', code: '', orderQuantity: '' }]);
         setIsModalOpen(true);
     };
 
-    // Finalize Invoice and Move Store to Completed Section
-    const handleSaveAndInvoice = () => {
-        // 1. Create the payload for the backend
-        const storeName = isCreating ? activeOrder.store : activeOrder.store;
+    const handleSaveAndInvoice = async () => {
+        let selectedStoreId = activeOrder.storeId;
+        let storeName = activeOrder.store;
 
-        if (isCreating && !storeName) {
-            alert("Please select a store.");
+        if (isCreating) {
+            const foundStore = stores.find(s => s.name === activeOrder.store);
+            if (!foundStore) {
+                alert("Please select a valid store.");
+                return;
+            }
+            selectedStoreId = foundStore.id;
+            storeName = foundStore.name;
+        }
+
+        const payload = {
+            storeId: selectedStoreId,
+            batch: activeOrder.batch || 'NA',
+            orderFlavourList: editableItems.map(item => ({
+                flavourCode: item.code || flavours.find(f => f.name === item.name)?.code || '',
+                orderQuantity: parseFloat(item.orderQuantity) || 0
+            }))
+        };
+
+        try {
+            if (isCreating) {
+                await createAndCompleteSaleApi(payload);
+            } else {
+                await completeSaleOrderApi(activeOrder.id, payload);
+            }
+            await loadBackendData();
+        } catch (err) {
+            console.error("Backend sale error:", err);
+            alert("Error: Failed to process sale in database.");
             return;
         }
 
-        const completedOrderPayload = {
-            orderId: activeOrder.orderId,
-            completedDate: new Date().toISOString().split('T')[0],
-            batch: activeOrder.batch, // Assuming batch comes from the active order
-            storeName: storeName,
-            flavourList: editableItems.map(item => ({
-                name: item.name,
-                quantity: parseFloat(item.orderQuantity) || 0
-            })),
-            status: "Completed"
-        };
-
-        // 2. Simulate backend call by logging the payload
-        console.log("Data to be sent to backend:", completedOrderPayload);
-
-        if (isCreating) {
-            // Add a new order to the list
-            const newOrder = {
-                ...activeOrder,
-                store: storeName,
-                flavours: editableItems.map(({ name, orderQuantity }) => ({ name, orderQuantity })),
-                status: 'Completed', // Assuming new supplies are immediately completed
-                completedDate: completedOrderPayload.completedDate,
-            };
-            setOrders(prev => [...prev, newOrder]);
-        } else {
-            // 3. Update local state to reflect the change for an existing order
-            setOrders(prevOrders =>
-                prevOrders.map(order => {
-                    if (order.orderId === activeOrder.orderId) {
-                        return {
-                            ...order,
-                            status: 'Completed',
-                            completedDate: completedOrderPayload.completedDate,
-                            flavours: editableItems.map(({ name, orderQuantity }) => ({ name, orderQuantity })) // Update flavours list
-                        };
-                    }
-                    return order;
-                })
-            );
-        }
-
-        // 4. Generate PDF Invoice
+        // Generate PDF Invoice
         const doc = new jsPDF();
-
-        // PDF Title
         doc.setFontSize(20);
         doc.text('Invoice', 14, 22);
 
-        // 2. Order Details
         doc.setFontSize(12);
         doc.text(`Order ID: ${activeOrder.orderId}`, 14, 32);
         doc.text(`Store: ${storeName}`, 14, 38);
         doc.text(`Date: ${activeOrder.orderDate}`, 14, 44);
 
-        // PDF Table
         const tableColumn = ["#", "Flavour", "KG", "Dol", "Price", "Amount"];
         const tableRows = [];
 
         editableItems.forEach((item, index) => {
-            const flavour = masterFlavourList.find(f => f.name === item.name);
+            const flavour = flavours.find(f => f.name === item.name);
             const price = flavour?.price || 0;
             const dole = Math.floor(parseFloat(item.orderQuantity) / 3) || 0;
             const amount = (parseFloat(item.orderQuantity) || 0) * price;
@@ -163,14 +180,11 @@ function SupplyPage() {
             showFoot: 'lastPage',
         });
 
-        // Save the PDF
         doc.save(`invoice-${activeOrder.orderId}.pdf`);
-
         setIsModalOpen(false);
     };
 
     const handleFlavourEnter = (index) => {
-        // Move focus to the KG input in the same row
         if (kgInputRefs.current[index]) {
             kgInputRefs.current[index].focus();
         }
@@ -179,36 +193,49 @@ function SupplyPage() {
     const handleKgEnter = (e, index) => {
         if (e.key === 'Enter') {
             e.preventDefault();
-            // If it's the last row, add a new one
             if (index === editableItems.length - 1) {
                 handleAddItem();
             } else {
-                // Otherwise, move focus to the next flavour input
                 flavourInputRefs.current[index + 1]?.focus();
             }
         }
     };
 
-    const handleItemChange = (uniqueId, field, value) => {
+    const handleItemChange = (uniqueId, field, value, selectedObj) => {
         setEditableItems(prevItems => {
             const newItems = prevItems.map(item => {
                 if (item.uniqueId === uniqueId) {
                     if (field === 'name') {
-                        const lowerCaseValue = value.toLowerCase();
-                        // Find by full "Name (Code)" string, or by name, or by code
-                        const newFlavour = masterFlavourList.find(f =>
-                            `${f.name} (${f.code})`.toLowerCase() === lowerCaseValue ||
-                            f.name.toLowerCase() === lowerCaseValue ||
-                            f.code.toLowerCase() === lowerCaseValue
-                        );
-                        return { ...item, name: newFlavour?.name || value, code: newFlavour?.code || '', error: false };
+                        let code = selectedObj?.code || '';
+                        let name = selectedObj?.name || value;
+
+                        if (!code && typeof value === 'string') {
+                            const cleanVal = value.trim();
+                            const codeMatch = cleanVal.match(/^([A-Z0-9]+)\s*-\s*(.*)$/);
+                            let searchVal = cleanVal;
+                            let searchCode = null;
+                            if (codeMatch) {
+                                searchCode = codeMatch[1];
+                                searchVal = codeMatch[2];
+                            }
+
+                            const matched = flavours.find(f =>
+                                (searchCode && f.code.toLowerCase() === searchCode.toLowerCase()) ||
+                                f.code.toLowerCase() === searchVal.toLowerCase() ||
+                                f.name.toLowerCase() === searchVal.toLowerCase()
+                            );
+                            if (matched) {
+                                code = matched.code;
+                                name = matched.name;
+                            }
+                        }
+                        return { ...item, name, code, error: false };
                     }
                     return { ...item, [field]: value };
                 }
                 return item;
             });
 
-            // Check for duplicates and set error flag
             const seen = new Set();
             return newItems.map(item => {
                 if (item.name && seen.has(item.name)) {
@@ -219,14 +246,14 @@ function SupplyPage() {
                 }
                 return { ...item, error: false };
             });
-        }
-        );
+        });
     };
 
     const handleAddItem = () => {
         setEditableItems(prev => [...prev, {
             uniqueId: Math.random(),
             name: '',
+            code: '',
             orderQuantity: '',
             error: false
         }]);
@@ -238,20 +265,19 @@ function SupplyPage() {
         }
     };
 
-    const flavourOptions = useMemo(() => masterFlavourList.map(f => ({ code: f.code, name: f.name })), []);
-    const flavourSearchItems = useMemo(() => masterFlavourList.map(f => `${f.name} (${f.code})`), []);
+
 
     const { totalKg, totalDol, totalAmount } = useMemo(() => {
         return editableItems.reduce((acc, item) => {
             const kg = parseFloat(item.orderQuantity) || 0;
-            const flavour = masterFlavourList.find(f => f.name === item.name);
+            const flavour = flavours.find(f => f.name === item.name);
             const price = flavour?.price || 0;
             acc.totalKg += kg;
             acc.totalDol += Math.floor(kg / 3);
             acc.totalAmount += kg * price;
             return acc;
         }, { totalKg: 0, totalDol: 0, totalAmount: 0 });
-    }, [editableItems]);
+    }, [editableItems, flavours]);
 
     const handleFilterChange = useCallback((e) => {
         const { name, value } = e.target;
@@ -262,7 +288,10 @@ function SupplyPage() {
         let filteredItems = [...orders];
 
         if (filters.store) {
-            filteredItems = filteredItems.filter(order => order.store.toLowerCase().includes(filters.store.toLowerCase()));
+            filteredItems = filteredItems.filter(order => {
+                const sName = order.masterStore?.name || order.store || '';
+                return sName.toLowerCase().includes(filters.store.toLowerCase());
+            });
         }
         if (filters.fromDate) {
             filteredItems = filteredItems.filter(order => new Date(order.orderDate) >= new Date(filters.fromDate));
@@ -273,36 +302,24 @@ function SupplyPage() {
         return filteredItems;
     }, [orders, filters]);
 
-    const { pendingOrders, completedOrders } = useMemo(() => {
+    const pendingOrders = useMemo(() => {
         const pending = [];
-        const completed = [];
         filteredOrders.forEach(order => {
-            if (order.status === 'Pending') {
+            if (order.status === 'Ready') {
                 pending.push(order);
-            } else {
-                completed.push(order);
             }
         });
 
-        // Apply sorting
-        const sortList = (list) => {
-            if (sortConfig.key) {
-                list.sort((a, b) => {
-                    if (a[sortConfig.key] < b[sortConfig.key]) {
-                        return sortConfig.direction === 'ascending' ? -1 : 1;
-                    }
-                    if (a[sortConfig.key] > b[sortConfig.key]) {
-                        return sortConfig.direction === 'ascending' ? 1 : -1;
-                    }
-                    return 0;
-                });
-            }
-        };
-
-        sortList(pending);
-        sortList(completed);
-
-        return { pendingOrders: pending, completedOrders: completed };
+        if (sortConfig.key) {
+            pending.sort((a, b) => {
+                const valA = sortConfig.key === 'store' ? (a.masterStore?.name || a.store || '') : a[sortConfig.key];
+                const valB = sortConfig.key === 'store' ? (b.masterStore?.name || b.store || '') : b[sortConfig.key];
+                if (valA < valB) return sortConfig.direction === 'ascending' ? -1 : 1;
+                if (valA > valB) return sortConfig.direction === 'ascending' ? 1 : -1;
+                return 0;
+            });
+        }
+        return pending;
     }, [filteredOrders, sortConfig]);
 
     return (
@@ -310,9 +327,9 @@ function SupplyPage() {
             <div className="page-head">
                 <div>
                     <div className="crumb">Factory Module</div>
-                    <h1>Supply Operations</h1>
+                    <h1>Sale Operations</h1>
                 </div>
-                <button className="btn-primary" onClick={handleAddNewSupply}>+ Add New Supply</button>
+                <button className="btn-primary" onClick={handleAddNewSale}>+ Add New Sale</button>
             </div>
 
             <div className="filters">
@@ -321,7 +338,7 @@ function SupplyPage() {
                     <AutocompleteInput
                         value={filters.store}
                         onChange={(value) => handleFilterChange({ target: { name: 'store', value } })}
-                        items={masterStoreList.map(store => store.name)}
+                        items={stores.map(store => store.name)}
                         placeholder="All Stores"
                     />
                 </div>
@@ -336,90 +353,54 @@ function SupplyPage() {
                 <button className="btn-ghost" onClick={resetFilters}>Reset</button>
             </div>
 
-            {/* 1. PENDING SUPPLIES PANEL */}
-            <section className="accordion open">
-                <div className="accordion-header">
-                    <span>1. Process Supplies</span>
-                    <span>▲</span>
-                </div>
-                <div className="accordion-content">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th className="sortable" onClick={() => requestSort('orderId')}>Order ID <span className="sort-arrow">{getSortIndicator('orderId')}</span></th>
-                                <th className="sortable" onClick={() => requestSort('orderDate')}>Order Date <span className="sort-arrow">{getSortIndicator('orderDate')}</span></th>
-                                <th className="sortable" onClick={() => requestSort('store')}>Store Name <span className="sort-arrow">{getSortIndicator('store')}</span></th>
-                                <th>Status</th>
-                                <th>Actions</th>
+            <table>
+                <thead>
+                    <tr>
+                        <th className="sortable" onClick={() => requestSort('id')}>ORDER ID <span className="sort-arrow">{getSortIndicator('id')}</span></th>
+                        <th className="sortable" onClick={() => requestSort('orderDate')}>ORDER DATE <span className="sort-arrow">{getSortIndicator('orderDate')}</span></th>
+                        <th className="sortable" onClick={() => requestSort('store')}>STORE NAME <span className="sort-arrow">{getSortIndicator('store')}</span></th>
+                        <th>STATUS</th>
+                        <th>ACTIONS</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {pendingOrders.length === 0 ? (
+                        <tr>
+                            <td colSpan="5" style={{ textAlign: 'center', color: 'var(--ink-soft)', padding: '24px', fontStyle: 'italic', fontWeight: '500' }}>
+                                No ready orders
+                            </td>
+                        </tr>
+                    ) : (
+                        pendingOrders.map((order, i) => (
+                            <tr key={order.id || i}>
+                                <td>{order.orderId || order.id}</td>
+                                <td>{order.orderDate}</td>
+                                <td><strong>{order.masterStore?.name || order.store || 'NA'}</strong></td>
+                                <td><span className="status ready">{order.status}</span></td>
+                                <td className="actions-cell">
+                                    <button className="btn-primary" onClick={() => openSaleModal(order)}>
+                                        Convert to Sale ✏️
+                                    </button>
+                                </td>
                             </tr>
-                        </thead>
-                        <tbody>
-                            {pendingOrders.map((order) => (
-                                <tr key={order.orderId}>
-                                    <td>{order.orderId}</td>
-                                    <td>{order.orderDate}</td>
-                                    <td><strong>{order.store}</strong></td>
-                                    <td><span className="status pending">PENDING</span></td>
-                                    <td className="actions-cell">
-                                        <button className="btn-primary" onClick={() => openSaleModal(order)}>
-                                            Convert to Sale ✏️
-                                        </button>
-                                    </td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                </div>
-            </section>
-
-            {/* 2. COMPLETED SUPPLIES PANEL */}
-            <section className="accordion open">
-                <div className="accordion-header">
-                    <span>2. Completed Supplies</span>
-                    <span>▲</span>
-                </div>
-                <div className="accordion-content">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th className="sortable" onClick={() => requestSort('orderId')}>ORDER ID <span className="sort-arrow">{getSortIndicator('orderId')}</span></th>
-                                <th className="sortable" onClick={() => requestSort('completedDate')}>DATE SUPPLIED <span className="sort-arrow">{getSortIndicator('completedDate')}</span></th>
-                                <th className="sortable" onClick={() => requestSort('store')}>STORE <span className="sort-arrow">{getSortIndicator('store')}</span></th>
-                                <th>STATUS</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {completedOrders.length === 0 ? (
-                                <tr><td colSpan="4" style={{ textAlign: 'center', padding: '1rem' }}>No completed supplies yet.</td></tr>
-                            ) : (
-                                completedOrders.map((order, i) => (
-                                    <tr key={i}>
-                                        <td>{order.orderId}</td>
-                                        <td>{order.completedDate}</td>
-                                        <td>{order.store}</td>
-                                        <td><span className="status completed">COMPLETED</span></td>
-                                    </tr>
-                                ))
-                            )}
-                        </tbody>
-                    </table>
-                </div>
-            </section>
+                        ))
+                    )}
+                </tbody>
+            </table>
 
             {/* ================= MODAL DIALOG COMPONENT ================= */}
             {isModalOpen && activeOrder && (
                 <div className="overlay open">
                     <div className="modal" style={{ width: '700px' }}>
 
-                        {/* Modal Header */}
-                        <h2>{isCreating ? 'New Supply Order' : 'Convert to Sale'}</h2>
+                        <h2>{isCreating ? 'New Sale Order' : 'Convert to Sale'}</h2>
                         {isCreating ? (
                             <div className="field" style={{ paddingBottom: '10px' }}>
                                 <label>Store Name</label>
                                 <AutocompleteInput
                                     value={activeOrder.store}
                                     onChange={(val) => setActiveOrder(prev => ({ ...prev, store: val }))}
-                                    items={masterStoreList.map(s => s.name)}
+                                    items={stores.map(s => s.name)}
                                     placeholder="Type store name..."
                                 />
                             </div>
@@ -427,8 +408,6 @@ function SupplyPage() {
                             <div className="modal-sub">{activeOrder.store} (Order #{activeOrder.orderId})</div>
                         )}
 
-
-                        {/* Current Store Order Table */}
                         <div className="modal-section">
                             <h4 className="modal-section-title">Current Store Order List</h4>
                             <table className="flavour-table" style={{ border: '1px solid #e2e8f0' }}>
@@ -445,8 +424,8 @@ function SupplyPage() {
                                 </thead>
                                 <tbody>
                                     {editableItems.map((item, index) => {
-                                        const flavour = masterFlavourList.find(f => f.name === item.name);
-                                        const originalStock = flavour?.stock || 0;
+                                        const flavour = flavours.find(f => f.name === item.name);
+                                        const originalStock = (flavour?.factoryStock || 0) + (flavour?.coldRoomStock || 0);
                                         const orderQuantity = parseFloat(item.orderQuantity) || 0;
                                         const amount = orderQuantity * (flavour?.price || 0);
                                         const remainingStock = originalStock - orderQuantity;
@@ -456,17 +435,17 @@ function SupplyPage() {
                                                 <td>
                                                     <AutocompleteInput
                                                         ref={el => flavourInputRefs.current[index] = el}
-                                                        value={item.name}
-                                                        onChange={(val) => handleItemChange(item.uniqueId, 'name', val)}
-                                                        items={flavourSearchItems}
+                                                        value={item.code && item.name ? `${item.code} - ${item.name}` : (item.name || '')}
+                                                        onChange={(val, selectedObj) => handleItemChange(item.uniqueId, 'name', val, selectedObj)}
+                                                        items={flavours}
                                                         placeholder="Type flavour..."
-                                                        onEnterPress={handleAddItem} // This was changed to handleAddItem in a previous step
+                                                        onEnterPress={() => handleFlavourEnter(index)}
                                                         error={item.error}
                                                         errorMessage="Duplicate"
                                                     />
                                                 </td>
                                                 <td>
-                                                    <input type="number" min="0" step="0.5" value={item.orderQuantity}
+                                                    <input type="number" min="0" step="3" value={item.orderQuantity}
                                                         ref={el => kgInputRefs.current[index] = el}
                                                         onChange={(e) => handleItemChange(item.uniqueId, 'orderQuantity', e.target.value)}
                                                         onKeyDown={(e) => handleKgEnter(e, index)} className="table-input" style={{ textAlign: 'center' }} />
@@ -479,28 +458,29 @@ function SupplyPage() {
                                                 >
                                                     {remainingStock}
                                                 </td>
-                                                <td><button type="button" className="rm-row" title="Remove row" onClick={() => handleRemoveItem(item.uniqueId)} style={{ visibility: editableItems.length > 1 ? 'visible' : 'hidden' }}>✕</button></td>
+                                                <td>
+                                                    <button className="remove-row-btn" onClick={() => handleRemoveItem(item.uniqueId)}>×</button>
+                                                </td>
                                             </tr>
                                         );
                                     })}
-                                </tbody>
-                                <tfoot>
-                                    <tr className="totals-row">
+                                    <tr className="total-row">
                                         <td colSpan="2"><strong>Total</strong></td>
                                         <td style={{ textAlign: 'center' }}><strong>{totalKg}</strong></td>
                                         <td style={{ textAlign: 'center' }}><strong>{totalDol}</strong></td>
                                         <td style={{ textAlign: 'center' }}><strong>{totalAmount.toLocaleString()}</strong></td>
                                         <td></td>
-                                        <td style={{ textAlign: 'center' }}><button type="button" className="add-row-btn" title="Add flavour row" onClick={handleAddItem}>+</button></td>
+                                        <td>
+                                            <button className="add-row-btn" onClick={handleAddItem}>+</button>
+                                        </td>
                                     </tr>
-                                </tfoot>
+                                </tbody>
                             </table>
                         </div>
 
-                        {/* Modal Bottom Footer Action Row */}
                         <div className="modal-actions">
                             <button className="btn-ghost" onClick={() => setIsModalOpen(false)}>Cancel</button>
-                            <button className="btn-primary" onClick={handleSaveAndInvoice}>Generate Invoice & Supply 🧾</button>
+                            <button className="btn-primary" onClick={handleSaveAndInvoice}>Generate Invoice & Sale 🧾</button>
                         </div>
 
                     </div>
@@ -510,4 +490,4 @@ function SupplyPage() {
     );
 }
 
-export default SupplyPage;
+export default SalePage;

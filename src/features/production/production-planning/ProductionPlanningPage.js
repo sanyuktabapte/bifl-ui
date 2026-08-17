@@ -1,62 +1,124 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { storeOrders, masterFlavourList as initialFlavourList, pendingOrdersList, processingBatchList, completedBatchList as initialCompletedBatches, planBlueprintList, masterStoreList } from '../../../assets/mockData';
 import ProjectionSection from './ProjectionSection';
 import BlueprintSection from './BlueprintSection';
-import CompletedBatchesSection from './CompletedBatchesSection';
+import { fetchProjection, fetchPlans, generatePlanApi, updatePlanStatusApi, deletePlanApi, updateItemBatchNumberApi } from '../../../services/productionPlanningService';
 
 function ProductionPlanningPage() {
-    const [masterFlavourList, setMasterFlavourList] = useState(initialFlavourList);
+    const [masterFlavourList, setMasterFlavourList] = useState([]);
     const [accordions, setAccordions] = useState({ projection: true, blueprint: true, completed: true });
     const [projectionMatrix, setProjectionMatrix] = useState({});
     const [batchNumberInput, setBatchNumberInput] = useState('');
     const [expandedBlueprints, setExpandedBlueprints] = useState({});
-    const [blueprintData, setBlueprintData] = useState(() => {
-        const initialBlueprints = {};
-        processingBatchList.forEach(batch => {
-            const flavours = {};
-            batch.flavourList.forEach(flavour => {
-                flavours[flavour.name] = {
-                    production: flavour.orderQuantity, // Assuming orderQuantity is the target production
-                    actualProduction: flavour.orderQuantity, // Pre-fill with target
-                    status: 'Processing'
-                };
-            });
-            initialBlueprints[batch.batch] = { processingDate: batch.processingDate, flavours: flavours };
-        });
-        return initialBlueprints;
-    });
-    const [productionOrders, setProductionOrders] = useState(pendingOrdersList);
-    const [completedBatchList, setCompletedBatchList] = useState(initialCompletedBatches);
+    const [blueprintData, setBlueprintData] = useState({});
+    const [completedBatchList, setCompletedBatchList] = useState([]);
+    const [planIdMap, setPlanIdMap] = useState({});
 
-    const allFlavors = useMemo(() => masterFlavourList.map(f => f.name), []);
+    const allFlavors = useMemo(() => masterFlavourList.map(f => f.name), [masterFlavourList]);
 
-    const calculateAndSetProjection = useCallback(() => {
-        // 1. Initialize matrix from flavourList, using openingStock
-        const matrix = {};
-        masterFlavourList.forEach(flavour => {
-            matrix[flavour.name] = {
-                opening: flavour.stock,
-                orderVol: 0, // Initialize order volume to 0
-                production: 0,
-                status: 'Not-Pending' // Default status
-            };
-        });
+    // Load Projections & Plans from backend
+    const loadBackendData = useCallback(async () => {
+        try {
+            const [projections, plans] = await Promise.all([
+                fetchProjection().catch(() => null),
+                fetchPlans().catch(() => null)
+            ]);
 
-        // 2. Aggregate pending orders from pendingOrdersList
-        pendingOrdersList.forEach(order => {
-            if (order.status === 'Pending' && matrix[order.name]) {
-                matrix[order.name].orderVol += order.orderQuantity;
-                matrix[order.name].status = 'Pending';
+            if (projections !== null) {
+                // Pre-populate projection matrix from master list and pending orders
+                const matrix = {};
+                projections.forEach(item => {
+                    matrix[item.flavourName] = {
+                        code: item.flavourCode,
+                        opening: item.factoryStock || 0,
+                        coldRoomStock: item.coldRoomStock || 0,
+                        orderVol: item.orderQuantity || 0,
+                        production: 0
+                    };
+                });
+                setProjectionMatrix(matrix);
             }
-        });
 
-        setProjectionMatrix(matrix);
-    }, [masterFlavourList]);
+            if (plans !== null) {
+                const blueprints = {};
+                const completedList = [];
+                const idMapping = {};
 
-    // Compute projection matrix from Pending store orders on initial mount
+                plans.forEach(plan => {
+                    idMapping[plan.batchNumber] = plan.id;
+                    const dateKey = plan.planDate || new Date().toISOString().split('T')[0];
+
+                    if (plan.status === 'Scheduled' || plan.status === 'In Production' || plan.status === 'Processing') {
+                        if (!blueprints[dateKey]) {
+                            blueprints[dateKey] = {
+                                id: dateKey,
+                                batchNumber: plan.batchNumber, // Fallback/default batch number representation
+                                processingDate: dateKey,
+                                flavours: {},
+                                planIds: [],
+                                status: plan.status
+                            };
+                        }
+                        
+                        blueprints[dateKey].planIds.push(plan.id);
+
+                        if (plan.items) {
+                            plan.items.forEach(item => {
+                                const name = item.flavour?.name || item.flavourCode;
+                                blueprints[dateKey].flavours[name] = {
+                                    id: item.id,
+                                    flavourCode: item.flavour?.code,
+                                    production: (blueprints[dateKey].flavours[name]?.production || 0) + (item.targetProduction || 0),
+                                    actualProduction: (blueprints[dateKey].flavours[name]?.actualProduction || 0) + (item.actualProduction !== undefined && item.actualProduction !== null ? item.actualProduction : (item.targetProduction || 0)),
+                                    coldRoomTransfer: blueprints[dateKey].flavours[name]?.coldRoomTransfer !== undefined && blueprints[dateKey].flavours[name]?.coldRoomTransfer !== null ?
+                                                      ((blueprints[dateKey].flavours[name]?.coldRoomTransfer || 0) + item.coldRoomTransfer) : 
+                                                      ((blueprints[dateKey].flavours[name]?.actualProduction || 0) + (item.actualProduction !== undefined && item.actualProduction !== null ? item.actualProduction : (item.targetProduction || 0))),
+                                    batchNumber: item.batchNumber || plan.batchNumber,
+                                    planId: plan.id,
+                                    status: plan.status
+                                };
+                            });
+                        }
+                    } else if (plan.status === 'Completed') {
+                        const flavoursMap = {};
+                        if (plan.items) {
+                            plan.items.forEach(item => {
+                                const name = item.flavour?.name || item.flavourCode;
+                                flavoursMap[name] = {
+                                    actualProduction: item.actualProduction !== undefined && item.actualProduction !== null ? item.actualProduction : (item.targetProduction || 0)
+                                };
+                            });
+                        }
+                        const completedFlavoursList = Object.keys(flavoursMap).map(fName => ({
+                            name: fName,
+                            flavourCode: flavoursMap[fName].flavourCode,
+                            actualProduction: flavoursMap[fName].actualProduction
+                        }));
+
+                        completedList.push({
+                            id: plan.id,
+                            batch: plan.batchNumber,
+                            completedDate: plan.planDate || new Date().toISOString().split('T')[0],
+                            flavours: completedFlavoursList,
+                            status: 'Completed'
+                        });
+                    }
+                });
+
+                setBlueprintData(blueprints);
+                setCompletedBatchList(completedList);
+                setPlanIdMap(idMapping);
+            } else {
+                setBlueprintData({});
+                setCompletedBatchList([]);
+            }
+        } catch (err) {
+            console.error("Error loading backend production planning data:", err);
+        }
+    }, []);
+
     useEffect(() => {
-        calculateAndSetProjection();
-    }, [calculateAndSetProjection]);
+        loadBackendData();
+    }, [loadBackendData]);
 
     const toggleAccordion = useCallback((accordionKey) => {
         setAccordions(prev => ({
@@ -65,166 +127,211 @@ function ProductionPlanningPage() {
         }));
     }, []);
 
-    const toggleBatchBand = useCallback((bNo) => setExpandedBlueprints(prev => ({ ...prev, [bNo]: !prev[bNo] })), []);
+    const toggleBatchBand = useCallback((dateKey) => setExpandedBlueprints(prev => ({ ...prev, [dateKey]: !prev[dateKey] })), []);
 
     const handleProductionChange = useCallback((flavor, val) => {
         const numVal = parseFloat(val) || 0;
         setProjectionMatrix(prev => ({ ...prev, [flavor]: { ...prev[flavor], production: numVal } }));
     }, []);
 
-    const handleActualProductionChange = useCallback((batchNo, flavour, value) => {
+    const handleActualProductionChange = useCallback((dateKey, flavour, value) => {
         const numValue = parseFloat(value) || 0;
         setBlueprintData(prev => {
             const updatedBlueprint = { ...prev };
-            if (updatedBlueprint[batchNo] && updatedBlueprint[batchNo].flavours[flavour]) {
-                updatedBlueprint[batchNo].flavours[flavour].actualProduction = numValue;
+            if (updatedBlueprint[dateKey] && updatedBlueprint[dateKey].flavours[flavour]) {
+                updatedBlueprint[dateKey].flavours[flavour].actualProduction = numValue;
             }
             return updatedBlueprint;
         });
     }, []);
 
-    const handleGeneratePlan = useCallback(() => {
+    const handleColdRoomTransferChange = useCallback((dateKey, flavour, value) => {
+        const numValue = parseFloat(value) || 0;
+        setBlueprintData(prev => {
+            const updatedBlueprint = { ...prev };
+            if (updatedBlueprint[dateKey] && updatedBlueprint[dateKey].flavours[flavour]) {
+                updatedBlueprint[dateKey].flavours[flavour].coldRoomTransfer = numValue;
+            }
+            return updatedBlueprint;
+        });
+    }, []);
+
+    const handleMoveAllToColdRoom = useCallback((dateKey, shouldMoveAll) => {
+        setBlueprintData(prev => {
+            const updatedBlueprint = { ...prev };
+            const dateObj = updatedBlueprint[dateKey];
+            if (dateObj && dateObj.flavours) {
+                Object.keys(dateObj.flavours).forEach(f => {
+                    const item = dateObj.flavours[f];
+                    if (item) {
+                        const actual = item.actualProduction !== undefined && item.actualProduction !== null ? item.actualProduction : item.production;
+                        item.coldRoomTransfer = shouldMoveAll ? actual : 0;
+                    }
+                });
+            }
+            return updatedBlueprint;
+        });
+    }, []);
+
+    const handleGeneratePlan = useCallback(async () => {
         const trimmedBatch = batchNumberInput.trim();
         if (!trimmedBatch) return alert("Error: Please provide a valid Batch Number!");
 
-        const flavoursData = {};
+        const itemsPayload = [];
         let hasActiveFlavors = false;
+
         Object.keys(projectionMatrix).forEach(f => {
             const data = projectionMatrix[f];
-            if (data && data.production > 0) { // Only include flavors with a production quantity
-                flavoursData[f] = {
-                    production: data.production,
-                    actualProduction: 0, // Default actual to 0
-                    status: 'Processing'
-                };
+            const targetProd = Number(data.production) || 0;
+            if (targetProd > 0) {
                 hasActiveFlavors = true;
+                itemsPayload.push({
+                    flavourCode: data.code || f.substring(0, 2).toUpperCase(),
+                    targetProduction: targetProd
+                });
             }
         });
 
-        if (!hasActiveFlavors) return alert("No active flavors to generate a blueprint!");
+        if (!hasActiveFlavors) {
+            return alert("Please enter production quantities (>0) for at least one flavour.");
+        }
 
-        setBlueprintData(prev => ({ ...prev, [trimmedBatch]: { processingDate: new Date().toISOString().split('T')[0], flavours: flavoursData } }));
-
-        setAccordions(prev => ({ ...prev, projection: false, blueprint: true }));
-        setBatchNumberInput('');
-
-        // Update order statuses from 'Pending' to 'Processing'
-        setProductionOrders(prevOrders =>
-            prevOrders.map(order =>
-                order.status === 'Pending' ? { ...order, status: 'Processing' } : order
-            )
-        );
-    }, [batchNumberInput, projectionMatrix, productionOrders]);
-
-    const handleEditMatrix = useCallback((bNo) => {
-        const targetedBatch = blueprintData[bNo]?.flavours;
-        if (!targetedBatch) return;
-
-        // Create a clean projection matrix for editing, showing only the blueprint's flavors.
-        setProjectionMatrix(prev => {
-            const matrix = { ...prev };
-            // For each flavor in the matrix
-            Object.keys(matrix).forEach(flavourName => {
-                // Reset order volume to hide pending orders during edit
-                matrix[flavourName].orderVol = 0;
-
-                // Set production quantity if it exists in the blueprint, otherwise reset to 0
-                if (targetedBatch[flavourName]) {
-                    matrix[flavourName].production = targetedBatch[flavourName].production || 0;
-                } else {
-                    matrix[flavourName].production = 0;
-                }
-            });
-            return matrix;
-        });
-
-        setBatchNumberInput(bNo);
-        setAccordions(prev => ({ ...prev, projection: true, blueprint: false }));
-    }, [blueprintData, projectionMatrix]);
-
-    const handleBatchComplete = useCallback((batchNo) => {
-        const batchToComplete = blueprintData[batchNo];
-        if (!batchToComplete) return;
-
-        // 1. Simulate backend call
         const payload = {
-            batch: batchNo,
-            completedDate: new Date().toISOString().split('T')[0],
-            status: "Completed",
-            flavourList: Object.entries(batchToComplete.flavours).map(([name, details]) => ({
-                name,
-                orderQuantity: details.actualProduction || 0
-            }))
+            batchNumber: trimmedBatch,
+            items: itemsPayload
         };
-        console.log("Backend Payload for Batch Completion:", payload);
 
-        // 2. Update master flavour list stock
-        setMasterFlavourList(prevFlavours => {
-            const updatedFlavours = prevFlavours.map(flavour => {
-                const batchFlavourDetails = batchToComplete.flavours[flavour.name];
-                if (batchFlavourDetails) {
-                    return {
-                        ...flavour,
-                        stock: flavour.stock + (batchFlavourDetails.actualProduction || 0)
-                    };
-                }
-                return flavour;
+        try {
+            await generatePlanApi(payload);
+            setBatchNumberInput('');
+            await loadBackendData();
+        } catch (err) {
+            console.error("Backend generatePlan error:", err);
+            alert("Error: Failed to generate production plan in database.");
+        }
+    }, [batchNumberInput, projectionMatrix, loadBackendData]);
+
+    const handleUpdateBatchStatus = useCallback(async (dateKey, newStatus) => {
+        const dateObj = blueprintData[dateKey];
+        if (!dateObj || !dateObj.planIds || dateObj.planIds.length === 0) return;
+
+        try {
+            for (const dbPlanId of dateObj.planIds) {
+                const itemsPayload = [];
+                Object.keys(dateObj.flavours).forEach(fName => {
+                    const item = dateObj.flavours[fName];
+                    if (item && item.planId === dbPlanId) {
+                        itemsPayload.push({
+                            flavourCode: item.flavourCode || allFlavors.find(fl => fl.name === fName)?.code || '',
+                            targetProduction: item.production || 0,
+                            actualProduction: item.actualProduction !== undefined && item.actualProduction !== '' ? Number(item.actualProduction) : (item.production || 0),
+                            coldRoomTransfer: item.coldRoomTransfer !== undefined && item.coldRoomTransfer !== '' ? Number(item.coldRoomTransfer) : 
+                                              (item.actualProduction !== undefined && item.actualProduction !== '' ? Number(item.actualProduction) : (item.production || 0))
+                        });
+                    }
+                });
+
+                await updatePlanStatusApi(dbPlanId, newStatus, itemsPayload);
+            }
+            await loadBackendData();
+        } catch (err) {
+            console.error("Backend status update error:", err);
+            alert("Error: Failed to update batch status in database.");
+        }
+    }, [blueprintData, allFlavors, loadBackendData]);
+
+    const handleDeleteBlueprint = useCallback(async (dateKey) => {
+        const dateObj = blueprintData[dateKey];
+        if (!dateObj || !dateObj.planIds || dateObj.planIds.length === 0) return;
+
+        if (!window.confirm(`Are you sure you want to delete all plan blueprints for date '${dateKey}'?`)) return;
+
+        try {
+            for (const dbPlanId of dateObj.planIds) {
+                await deletePlanApi(dbPlanId);
+            }
+            await loadBackendData();
+        } catch (err) {
+            console.error("Backend deletePlan error:", err);
+            alert("Error: Failed to delete blueprint from database.");
+        }
+    }, [blueprintData, loadBackendData]);
+
+    const handleEditMatrix = useCallback((dateKey) => {
+        const dateObj = blueprintData[dateKey];
+        if (!dateObj) return;
+
+        const firstBatchNo = Object.values(dateObj.flavours)[0]?.batchNumber || '';
+        setBatchNumberInput(firstBatchNo);
+
+        setProjectionMatrix(prev => {
+            const updated = { ...prev };
+            Object.keys(updated).forEach(f => {
+                updated[f] = { ...updated[f], production: 0 };
             });
-            return updatedFlavours;
-        });
-
-        // 3. Move batch from processing to completed
-        const newCompletedBatch = {
-            batch: batchNo,
-            completedDate: payload.completedDate,
-            status: "Completed",
-            flavourList: payload.flavourList
-        };
-
-        setCompletedBatchList(prev => [newCompletedBatch, ...prev]);
-        setBlueprintData(prev => {
-            const { [batchNo]: _, ...rest } = prev;
-            return rest;
+            if (dateObj.flavours) {
+                Object.keys(dateObj.flavours).forEach(fName => {
+                    if (updated[fName]) {
+                        updated[fName].production = dateObj.flavours[fName].production || 0;
+                    }
+                });
+            }
+            return updated;
         });
     }, [blueprintData]);
 
-    const totals = useMemo(() => {
-        const totals = {
-            totalOpen: 0, totalOrder: 0, totalProd: 0, totalClose: 0,
-            totalOpenDol: 0, totalOrderDol: 0, totalProdDol: 0, totalCloseDol: 0
-        };
-        if (!projectionMatrix) return totals;
+    const handleBatchNumberChange = useCallback(async (itemId, oldBatchNo, newBatchNumber) => {
+        try {
+            await updateItemBatchNumberApi(itemId, oldBatchNo, newBatchNumber);
+            await loadBackendData();
+        } catch (err) {
+            console.error("Backend updateItemBatchNumber error:", err);
+        }
+    }, [loadBackendData]);
 
-        allFlavors.forEach(f => {
-            const data = projectionMatrix[f] || {};
-            if (data && (data.orderVol > 0 || data.production > 0)) {
-                const opening = data.opening || 0;
-                const orderVol = data.orderVol || 0;
-                const production = data.production || 0;
-                const closing = opening - orderVol + production;
-
-                totals.totalOpen += opening;
-                totals.totalOrder += orderVol;
-                totals.totalProd += production;
-                totals.totalClose += closing;
-
-                totals.totalOpenDol += Math.floor(opening / 3);
-                totals.totalOrderDol += Math.floor(orderVol / 3);
-                totals.totalProdDol += Math.floor(production / 3);
-                totals.totalCloseDol += Math.floor(closing / 3);
-            }
-        });
-        return totals;
-    }, [projectionMatrix, allFlavors]);
-
-    const handleResetProjection = useCallback(() => {
-        calculateAndSetProjection();
-        // In a real app, you might refetch or reset to original mock data
-        // For now, this just recalculates based on the current state
+    const handleReset = useCallback(() => {
         setBatchNumberInput('');
-        // To truly reset, we'd need to reset the productionOrders state
-        // setProductionOrders(storeOrders);
-    }, [calculateAndSetProjection]);
+        loadBackendData();
+    }, [loadBackendData]);
+
+    const isExistingPlan = useMemo(() => {
+        const trimmed = batchNumberInput.trim();
+        if (!trimmed) return false;
+        return Object.values(blueprintData).some(dateObj => 
+            Object.values(dateObj.flavours).some(item => item.batchNumber === trimmed)
+        );
+    }, [batchNumberInput, blueprintData]);
+
+    const totals = useMemo(() => {
+        let totalOpen = 0;
+        let totalOrder = 0;
+        let totalClose = 0;
+        let totalProd = 0;
+
+        Object.keys(projectionMatrix).forEach(f => {
+            const data = projectionMatrix[f];
+            const opening = (data.opening || 0) + (data.coldRoomStock || 0);
+            const orderVol = data.orderVol || 0;
+            const production = data.production || 0;
+            const closing = opening + production - orderVol;
+
+            totalOpen += opening;
+            totalOrder += orderVol;
+            totalClose += closing;
+            totalProd += production;
+        });
+
+        return {
+            totalOpen,
+            totalOrder,
+            totalClose,
+            totalProd,
+            totalOpenDol: Math.floor(totalOpen / 3),
+            totalOrderDol: Math.floor(totalOrder / 3),
+            totalCloseDol: Math.floor(totalClose / 3),
+            totalProdDol: Math.floor(totalProd / 3)
+        };
+    }, [projectionMatrix]);
 
     return (
         <div className="container">
@@ -245,7 +352,8 @@ function ProductionPlanningPage() {
                 batchNumberInput={batchNumberInput}
                 setBatchNumberInput={setBatchNumberInput}
                 handleGeneratePlan={handleGeneratePlan}
-                handleReset={handleResetProjection}
+                handleReset={handleReset}
+                isExistingPlan={isExistingPlan}
             />
 
             <BlueprintSection
@@ -255,17 +363,12 @@ function ProductionPlanningPage() {
                 expandedBatches={expandedBlueprints}
                 toggleBatchBand={toggleBatchBand}
                 handleEditMatrix={handleEditMatrix}
-                handleDeleteBlueprint={() => { }} // Placeholder
+                handleDeleteBlueprint={handleDeleteBlueprint}
                 handleActualProductionChange={handleActualProductionChange}
-                handleBatchComplete={handleBatchComplete}
-            />
-
-            <CompletedBatchesSection
-                isOpen={accordions.completed}
-                toggleAccordion={toggleAccordion}
-                completedBatches={completedBatchList}
-                expandedBatches={expandedBlueprints}
-                toggleBatchBand={toggleBatchBand}
+                handleColdRoomTransferChange={handleColdRoomTransferChange}
+                handleMoveAllToColdRoom={handleMoveAllToColdRoom}
+                handleBatchComplete={handleUpdateBatchStatus}
+                handleBatchNumberChange={handleBatchNumberChange}
             />
         </div>
     );

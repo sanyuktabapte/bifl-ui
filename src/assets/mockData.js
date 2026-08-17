@@ -1,59 +1,59 @@
 export const masterFlavourList = [
     // Classic
-    { code: "EL", name: "Classic Elaichi", category: "Classic", stock: 9, price: 271 },
-    { code: "KK", name: "Keshar King", category: "Classic", stock: 6, price: 352 },
-    { code: "KE", name: "Keshar Elaichi", category: "Classic", stock: 12, price: 381 },
+    { code: "EL", name: "Classic Elaichi", category: "Classic", factoryStock: 6, coldRoomStock: 3, price: 271 },
+    { code: "KK", name: "Keshar King", category: "Classic", factoryStock: 3, coldRoomStock: 3, price: 352 },
+    { code: "KE", name: "Keshar Elaichi", category: "Classic", factoryStock: 6, coldRoomStock: 6, price: 381 },
 
     // Fruit Fantasy
-    { code: "MG", name: "Mango", category: "Fruit Fantasy", stock: 21, price: 325 },
-    { code: "GU", name: "Guava", category: "Fruit Fantasy", stock: 15, price: 325 },
-    { code: "PA", name: "Pineapple", category: "Fruit Fantasy", stock: 9, price: 315 },
-    { code: "STR", name: "Strawberry", category: "Fruit Fantasy", stock: 18, price: 325 },
-    { code: "ORJ", name: "Orange", category: "Fruit Fantasy", stock: 12, price: 325 },
-    { code: "MF", name: "Mix Fruit", category: "Fruit Fantasy", stock: 6, price: 353 },
-    { code: "TDC", name: "Tender Coconut", category: "Fruit Fantasy", stock: 6, price: 371 },
-    { code: "SP", name: "Sitaphal", category: "Fruit Fantasy", stock: 12, price: 362 },
-    { code: "JM", name: "Jamun", category: "Fruit Fantasy", stock: 3, price: 362 },
-    { code: "BLB", name: "Blueberry", category: "Fruit Fantasy", stock: 9, price: 400 },
-    { code: "BB", name: "Berry Blast", category: "Fruit Fantasy", stock: 15, price: 371 },
-    { code: "BKC", name: "Blackcurrant", category: "Fruit Fantasy", stock: 15, price: 371 },
-    { code: "FB", name: "Fruit Buzz", category: "Fruit Fantasy", stock: 9, price: 0 },
+    { code: "MG", name: "Mango", category: "Fruit Fantasy", factoryStock: 12, coldRoomStock: 9, price: 325 },
+    { code: "GU", name: "Guava", category: "Fruit Fantasy", factoryStock: 9, coldRoomStock: 6, price: 325 },
+    { code: "PA", name: "Pineapple", category: "Fruit Fantasy", factoryStock: 6, coldRoomStock: 3, price: 315 },
+    { code: "STR", name: "Strawberry", category: "Fruit Fantasy", factoryStock: 9, coldRoomStock: 9, price: 325 },
+    { code: "ORJ", name: "Orange", category: "Fruit Fantasy", factoryStock: 6, coldRoomStock: 6, price: 325 },
+    { code: "MF", name: "Mix Fruit", category: "Fruit Fantasy", factoryStock: 3, coldRoomStock: 3, price: 353 },
+    { code: "TDC", name: "Tender Coconut", category: "Fruit Fantasy", factoryStock: 3, coldRoomStock: 3, price: 371 },
+    { code: "SP", name: "Sitaphal", category: "Fruit Fantasy", factoryStock: 6, coldRoomStock: 6, price: 362 },
+    { code: "JM", name: "Jamun", category: "Fruit Fantasy", factoryStock: 0, coldRoomStock: 3, price: 362 },
+    { code: "BLB", name: "Blueberry", category: "Fruit Fantasy", factoryStock: 6, coldRoomStock: 3, price: 400 },
+    { code: "BB", name: "Berry Blast", category: "Fruit Fantasy", factoryStock: 9, coldRoomStock: 6, price: 371 },
+    { code: "BKC", name: "Blackcurrant", category: "Fruit Fantasy", factoryStock: 9, coldRoomStock: 6, price: 371 },
+    { code: "FB", name: "Fruit Buzz", category: "Fruit Fantasy", factoryStock: 6, coldRoomStock: 3, price: 0 },
 
     // Premium Dryfruit
-    { code: "AN", name: "American Nuts", category: "Premium Dryfruit", stock: 24, price: 410 },
-    { code: "KP", name: "Keshar Pista", category: "Premium Dryfruit", stock: 18, price: 448 },
-    { code: "GUL", name: "Shahi Gulkand", category: "Premium Dryfruit", stock: 12, price: 419 },
-    { code: "MB", name: "Mava Badam", category: "Premium Dryfruit", stock: 18, price: 419 },
-    { code: "ANJ", name: "Shahi Anjeer", category: "Premium Dryfruit", stock: 15, price: 419 },
-    { code: "DV", name: "Dryfruit Vanilla", category: "Premium Dryfruit", stock: 12, price: 410 },
-    { code: "BS", name: "Butterscotch Dryfruit", category: "Premium Dryfruit", stock: 21, price: 419 },
-    { code: "CA", name: "Chocolate Almond", category: "Premium Dryfruit", stock: 18, price: 419 },
-    { code: "DD", name: "Dryfruits Delight", category: "Premium Dryfruit", stock: 15, price: 419 },
+    { code: "AN", name: "American Nuts", category: "Premium Dryfruit", factoryStock: 15, coldRoomStock: 9, price: 410 },
+    { code: "KP", name: "Keshar Pista", category: "Premium Dryfruit", factoryStock: 9, coldRoomStock: 9, price: 448 },
+    { code: "GUL", name: "Shahi Gulkand", category: "Premium Dryfruit", factoryStock: 6, coldRoomStock: 6, price: 419 },
+    { code: "MB", name: "Mava Badam", category: "Premium Dryfruit", factoryStock: 9, coldRoomStock: 9, price: 419 },
+    { code: "ANJ", name: "Shahi Anjeer", category: "Premium Dryfruit", factoryStock: 9, coldRoomStock: 6, price: 419 },
+    { code: "DV", name: "Dryfruit Vanilla", category: "Premium Dryfruit", factoryStock: 6, coldRoomStock: 6, price: 410 },
+    { code: "BS", name: "Butterscotch Dryfruit", category: "Premium Dryfruit", factoryStock: 12, coldRoomStock: 9, price: 419 },
+    { code: "CA", name: "Chocolate Almond", category: "Premium Dryfruit", factoryStock: 9, coldRoomStock: 9, price: 419 },
+    { code: "DD", name: "Dryfruits Delight", category: "Premium Dryfruit", factoryStock: 9, coldRoomStock: 6, price: 419 },
 
     // Royal
-    { code: "KR", name: "Keshar Rajbhog", category: "Royal", stock: 12, price: 495 },
-    { code: "NR", name: "Navratna Nuts", category: "Royal", stock: 9, price: 495 },
-    { code: "RAJ", name: "Rajwadi", category: "Royal", stock: 9, price: 505 },
-    { code: "TJ", name: "Traffic Jam", category: "Royal", stock: 12, price: 486 },
-    { code: "MK", name: "Mava Kulfi", category: "Royal", stock: 16, price: 505 },
-    { code: "PR", name: "Panchratna Nuts", category: "Royal", stock: 12, price: 476 },
-    { code: "AF", name: "Afghan Dryfruit", category: "Royal", stock: 9, price: 495 },
-    { code: "KM", name: "Kaju Malai", category: "Royal", stock: 15, price: 495 },
-    { code: "MM", name: "Mango Mastani", category: "Royal", stock: 18, price: 524 },
+    { code: "KR", name: "Keshar Rajbhog", category: "Royal", factoryStock: 6, coldRoomStock: 6, price: 495 },
+    { code: "NR", name: "Navratna Nuts", category: "Royal", factoryStock: 6, coldRoomStock: 3, price: 495 },
+    { code: "RAJ", name: "Rajwadi", category: "Royal", factoryStock: 6, coldRoomStock: 3, price: 505 },
+    { code: "TJ", name: "Traffic Jam", category: "Royal", factoryStock: 6, coldRoomStock: 6, price: 486 },
+    { code: "MK", name: "Mava Kulfi", category: "Royal", factoryStock: 9, coldRoomStock: 6, price: 505 },
+    { code: "PR", name: "Panchratna Nuts", category: "Royal", factoryStock: 6, coldRoomStock: 6, price: 476 },
+    { code: "AF", name: "Afghan Dryfruit", category: "Royal", factoryStock: 6, coldRoomStock: 3, price: 495 },
+    { code: "KM", name: "Kaju Malai", category: "Royal", factoryStock: 9, coldRoomStock: 6, price: 495 },
+    { code: "MM", name: "Mango Mastani", category: "Royal", factoryStock: 9, coldRoomStock: 9, price: 524 },
 
     // Chocolate & Brownie
-    { code: "MDC", name: "Mud Chocolate", category: "Chocolate & Brownie", stock: 21, price: 486 },
-    { code: "CNN", name: "Chocolate & Nuts", category: "Chocolate & Brownie", stock: 15, price: 505 },
-    { code: "BR", name: "Walnut Brownie", category: "Chocolate & Brownie", stock: 12, price: 495 },
-    { code: "CNC", name: "Chocolate & Cookies", category: "Chocolate & Brownie", stock: 9, price: 505 },
-    { code: "CCR", name: "Coffee Crumble", category: "Chocolate & Brownie", stock: 9, price: 505 },
-    { code: "LBC", name: "Lotus Biscoff", category: "Chocolate & Brownie", stock: 24, price: 515 }, // Mapped from LBS
-    { code: "BLG", name: "Belgian Chocolate", category: "Chocolate & Brownie", stock: 18, price: 515 },
+    { code: "MDC", name: "Mud Chocolate", category: "Chocolate & Brownie", factoryStock: 12, coldRoomStock: 9, price: 486 },
+    { code: "CNN", name: "Chocolate & Nuts", category: "Chocolate & Brownie", factoryStock: 9, coldRoomStock: 6, price: 505 },
+    { code: "BR", name: "Walnut Brownie", category: "Chocolate & Brownie", factoryStock: 6, coldRoomStock: 6, price: 495 },
+    { code: "CNC", name: "Chocolate & Cookies", category: "Chocolate & Brownie", factoryStock: 6, coldRoomStock: 3, price: 505 },
+    { code: "CCR", name: "Coffee Crumble", category: "Chocolate & Brownie", factoryStock: 6, coldRoomStock: 3, price: 505 },
+    { code: "LBC", name: "Lotus Biscoff", category: "Chocolate & Brownie", factoryStock: 15, coldRoomStock: 9, price: 515 }, // Mapped from LBS
+    { code: "BLG", name: "Belgian Chocolate", category: "Chocolate & Brownie", factoryStock: 9, coldRoomStock: 9, price: 515 },
 
     // Signature Edition
-    { code: "PM", name: "Paan Masala", category: "Signature Edition", stock: 6, price: 410 },
-    { code: "RM", name: "Raj Mastani", category: "Signature Edition", stock: 12, price: 515 },
-    { code: "FR", name: "Ferrero Rocher", category: "Signature Edition", stock: 15, price: 600 }
+    { code: "PM", name: "Paan Masala", category: "Signature Edition", factoryStock: 3, coldRoomStock: 3, price: 410 },
+    { code: "RM", name: "Raj Mastani", category: "Signature Edition", factoryStock: 6, coldRoomStock: 6, price: 515 },
+    { code: "FR", name: "Ferrero Rocher", category: "Signature Edition", factoryStock: 9, coldRoomStock: 6, price: 600 }
 ];
 
 export const masterStoreList = [

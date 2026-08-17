@@ -3,11 +3,14 @@ import React, { useState, useMemo, useCallback } from 'react';
 const CompletedBatchesSection = ({
     isOpen,
     toggleAccordion,
-    completedBatches,
-    expandedBatches,
-    toggleBatchBand
+    completedBatchList = []
 }) => {
     const [filters, setFilters] = useState({ batch: '', fromDate: '', toDate: '' });
+    const [expandedBatches, setExpandedBatches] = useState({});
+
+    const toggleBatchBand = useCallback((batchNo) => {
+        setExpandedBatches(prev => ({ ...prev, [batchNo]: !prev[batchNo] }));
+    }, []);
 
     const handleFilterChange = useCallback((e) => {
         const { name, value } = e.target;
@@ -19,14 +22,13 @@ const CompletedBatchesSection = ({
     }, []);
 
     const filteredBatches = useMemo(() => {
-        return completedBatches.filter(batch => {
-            const batchMatch = !filters.batch || String(batch.batch).includes(filters.batch);
+        return (completedBatchList || []).filter(batch => {
+            const batchMatch = !filters.batch || String(batch.batch).toLowerCase().includes(filters.batch.toLowerCase());
             const fromDateMatch = !filters.fromDate || new Date(batch.completedDate) >= new Date(filters.fromDate);
             const toDateMatch = !filters.toDate || new Date(batch.completedDate) <= new Date(filters.toDate);
             return batchMatch && fromDateMatch && toDateMatch;
         });
-    }, [completedBatches, filters]);
-
+    }, [completedBatchList, filters]);
 
     if (!isOpen) {
         return (
@@ -60,11 +62,11 @@ const CompletedBatchesSection = ({
                     <div className="empty-state">No batches completed yet.</div>
                 ) : (
                     filteredBatches.map(batch => {
-                        // Calculate totals for this batch
-                        const batchTotals = batch.flavourList.reduce((acc, item) => {
-                            acc.targetKg += item.orderQuantity || 0;
-                            // For completed batches, we can assume actual is same as target for now
-                            acc.actualKg += item.orderQuantity || 0;
+                        const batchFlavours = batch.flavours || [];
+                        const batchTotals = batchFlavours.reduce((acc, item) => {
+                            const qty = item.actualProduction || item.orderQuantity || 0;
+                            acc.targetKg += qty;
+                            acc.actualKg += qty;
                             return acc;
                         }, { targetKg: 0, actualKg: 0 });
 
@@ -91,17 +93,19 @@ const CompletedBatchesSection = ({
                                                     </tr>
                                                 </thead>
                                                 <tbody>
-                                                    {batch.flavourList.map(item => {
-                                                        const targetProduction = item.orderQuantity;
-                                                        // For completed mock data, assume actual equals target
+                                                    {batchFlavours.map(item => {
+                                                        const targetProduction = item.actualProduction || item.orderQuantity || 0;
                                                         const actualProduction = targetProduction;
-                                                        return (<tr key={item.name}>
-                                                            <td>{batch.completedDate}</td>
-                                                            <td><strong>{item.name}</strong></td>
-                                                            <td className="main-col-start" style={{ fontWeight: 600, color: 'var(--blue-deep)' }}>{targetProduction}</td>
-                                                            <td className="main-col-start" style={{ borderRight: '1px solid #e2e8f0' }}>{actualProduction}</td>
-                                                            <td><span className={`status ${batch.status.toLowerCase()}`}>{batch.status}</span></td>
-                                                        </tr>);
+                                                        const name = item.name || item.flavourCode || '';
+                                                        return (
+                                                            <tr key={name}>
+                                                                <td>{batch.completedDate}</td>
+                                                                <td><strong>{name}</strong></td>
+                                                                <td className="main-col-start" style={{ fontWeight: 600, color: 'var(--blue-deep)' }}>{targetProduction}</td>
+                                                                <td className="main-col-start" style={{ borderRight: '1px solid #e2e8f0' }}>{actualProduction}</td>
+                                                                <td><span className="status completed">Completed</span></td>
+                                                            </tr>
+                                                        );
                                                     })}
                                                 </tbody>
                                                 <tfoot>
