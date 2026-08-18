@@ -1,9 +1,9 @@
 import React from 'react';
 import { BrowserRouter, Routes, Route, NavLink, Navigate } from 'react-router-dom';
 import StoreOrderPage from './features/production/store-order/StoreOrderPage';
-import PurchaseOrdersPage from './features/production/purchase-order/PurchaseOrdersPage'; // Corrected path
+
 import ProductionPlanningPage from './features/production/production-planning/ProductionPlanningPage';
-import SalePage from './features/production/supply-order/SalePage';
+import SalePage from './features/production/sales/SalePage';
 import BatchesPage from './features/production/batches/BatchesPage';
 import ReportsPage from './features/production/reports/ReportsPage';
 import AdminPage from './features/admin/AdminPage';
