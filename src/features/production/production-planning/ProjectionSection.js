@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 
 const ProjectionSection = ({
     isOpen,
@@ -13,6 +13,17 @@ const ProjectionSection = ({
     handleReset,
     isExistingPlan,
 }) => {
+
+    const handleKeyDown = (e, index) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            const inputs = document.querySelectorAll('.projection-input');
+            if (inputs && inputs.length > index + 1) {
+                inputs[index + 1].focus();
+            }
+        }
+    };
+
     if (!isOpen) {
         return (
             <div className="accordion">
@@ -37,10 +48,11 @@ const ProjectionSection = ({
                 </div>
             </div>
             <div className="accordion-content">
-                {Object.keys(projectionMatrix).length === 0 ? (
+                {Object.keys(projectionMatrix).filter(f => projectionMatrix[f]?.orderVol > 0 || projectionMatrix[f]?.production > 0).length === 0 ? (
                     <div className="empty-state">No pending orders</div>
                 ) : (
-                    <div className="table-responsive-wrapper">
+                    <div>
+                        <div className="table-responsive-wrapper">
                         <table>
                             <thead>
                                 <tr>
@@ -59,11 +71,10 @@ const ProjectionSection = ({
                                 </tr>
                             </thead>
                             <tbody>
-                                {Object.keys(projectionMatrix).map(f => {
+                                {Object.keys(projectionMatrix).map((f, index) => {
                                     const data = projectionMatrix[f];
                                     if (!data) return null; // Safeguard, though keys should exist
                                     const closing = (data.opening || 0) + (data.coldRoomStock || 0) + (data.production || 0) - (data.orderVol || 0);
-                                    // Show row if flavor status is pending OR if closing stock is negative
 
                                     if (data.orderVol <= 0 && data.production <= 0) {
                                         return null;
@@ -76,7 +87,7 @@ const ProjectionSection = ({
                                             <td className="main-col-start" style={{ color: '#D97706', fontWeight: 600 }}>{data.orderVol}</td>
                                             <td className="main-col-start" style={{ fontWeight: 600, color: closing >= 0 ? 'var(--green)' : 'var(--red)' }}>{closing}</td>
                                             <td className="main-col-start">
-                                                <input type="number" step="3" value={data.production || ''} onChange={(e) => handleProductionChange(f, e.target.value)} className="table-input" placeholder="0" />
+                                                <input type="number" step="3" value={data.production || ''} onChange={(e) => handleProductionChange(f, e.target.value)} onKeyDown={(e) => handleKeyDown(e, index)} className="table-input projection-input" placeholder="0" />
                                             </td>
                                         </tr>
                                     );
@@ -98,6 +109,7 @@ const ProjectionSection = ({
                                 </tr>
                             </tfoot>
                         </table>
+                        </div>
                     </div>
                 )}
                 <div className="generator-bar">

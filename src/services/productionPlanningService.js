@@ -1,7 +1,7 @@
 const API_BASE_URL = `http://${window.location.hostname}:8080/api/production-planning`;
 
 export const fetchProjection = async () => {
-    const response = await fetch(`${API_BASE_URL}/projection`);
+    const response = await fetch(`${API_BASE_URL}/projection`, { cache: 'no-store' });
     if (!response.ok) {
         throw new Error(`Failed to fetch projection data: ${response.statusText}`);
     }
@@ -9,7 +9,7 @@ export const fetchProjection = async () => {
 };
 
 export const fetchPlans = async () => {
-    const response = await fetch(`${API_BASE_URL}/plans`);
+    const response = await fetch(`${API_BASE_URL}/plans`, { cache: 'no-store' });
     if (!response.ok) {
         throw new Error(`Failed to fetch production plans: ${response.statusText}`);
     }

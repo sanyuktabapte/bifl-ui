@@ -12,6 +12,7 @@ function ProductionPlanningPage() {
     const [blueprintData, setBlueprintData] = useState({});
     const [completedBatchList, setCompletedBatchList] = useState([]);
     const [planIdMap, setPlanIdMap] = useState({});
+    const isExistingPlan = false;
 
     const allFlavors = useMemo(() => masterFlavourList.map(f => f.name), [masterFlavourList]);
 
@@ -174,8 +175,7 @@ function ProductionPlanningPage() {
     }, []);
 
     const handleGeneratePlan = useCallback(async () => {
-        const trimmedBatch = batchNumberInput.trim();
-        if (!trimmedBatch) return alert("Error: Please provide a valid Batch Number!");
+        const trimmedBatch = batchNumberInput.trim() || 'NA';
 
         const itemsPayload = [];
         let hasActiveFlavors = false;
@@ -205,6 +205,11 @@ function ProductionPlanningPage() {
             await generatePlanApi(payload);
             setBatchNumberInput('');
             await loadBackendData();
+            
+            // Auto-expand the newly generated plan's batch band
+            const newPlanDate = new Date().toISOString().split('T')[0];
+            setExpandedBlueprints(prev => ({ ...prev, [newPlanDate]: true }));
+            
         } catch (err) {
             console.error("Backend generatePlan error:", err);
             alert("Error: Failed to generate production plan in database.");
@@ -294,13 +299,7 @@ function ProductionPlanningPage() {
         loadBackendData();
     }, [loadBackendData]);
 
-    const isExistingPlan = useMemo(() => {
-        const trimmed = batchNumberInput.trim();
-        if (!trimmed) return false;
-        return Object.values(blueprintData).some(dateObj => 
-            Object.values(dateObj.flavours).some(item => item.batchNumber === trimmed)
-        );
-    }, [batchNumberInput, blueprintData]);
+
 
     const totals = useMemo(() => {
         let totalOpen = 0;

@@ -1,11 +1,15 @@
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { fetchAllSaleOrders, completeSaleOrderApi, createAndCompleteSaleApi } from '../../../services/saleService';
+import { updateStoreOrderApi } from '../../../services/storeOrderService';
 import { fetchAdminDashboard } from '../../../services/adminService';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import AutocompleteInput from '../../../components/common/AutocompleteInput';
 
 function SalePage() {
+    const [originalItems, setOriginalItems] = useState([]);
+    const [showWarningModal, setShowWarningModal] = useState(false);
+    const [warningPayload, setWarningPayload] = useState(null);
     const [orders, setOrders] = useState([]);
     const [stores, setStores] = useState([]);
     const [flavours, setFlavours] = useState([]);
@@ -85,12 +89,14 @@ function SalePage() {
             status: order.status,
             batch: order.batch || 'NA'
         });
-        setEditableItems((order.flavours || []).map(f => ({
+        const initialItems = (order.flavours || []).map(f => ({
             uniqueId: Math.random(),
             name: f.flavourName || '',
             code: f.flavourCode || '',
             orderQuantity: f.orderQuantity || ''
-        })));
+        }));
+        setEditableItems(initialItems);
+        setOriginalItems(JSON.parse(JSON.stringify(initialItems)));
         setIsModalOpen(true);
     };
 
@@ -107,6 +113,7 @@ function SalePage() {
         setEditableItems([{ uniqueId: Math.random(), name: '', code: '', orderQuantity: '' }]);
         setIsModalOpen(true);
     };
+
 
     const handleSaveAndInvoice = async () => {
         let selectedStoreId = activeOrder.storeId;
@@ -130,6 +137,32 @@ function SalePage() {
                 orderQuantity: parseFloat(item.orderQuantity) || 0
             }))
         };
+
+        // Check for negative stock
+        let hasNegativeStock = false;
+        editableItems.forEach(item => {
+            const flavour = flavours.find(f => f.name === item.name);
+            const remainingStock = (item.closingStock !== undefined ? item.closingStock : flavour?.factoryStock || 0) - (parseFloat(item.orderQuantity) || 0);
+            if (remainingStock < 0) {
+                hasNegativeStock = true;
+            }
+        });
+
+        let isOriginal = true;
+        if (editableItems.length !== originalItems.length) isOriginal = false;
+        else {
+            editableItems.forEach((item, i) => {
+                if (item.code !== originalItems[i].code || parseFloat(item.orderQuantity) !== parseFloat(originalItems[i].orderQuantity)) {
+                    isOriginal = false;
+                }
+            });
+        }
+
+        if (hasNegativeStock && !isOriginal) {
+            setWarningPayload(payload);
+            setShowWarningModal(true);
+            return;
+        }
 
         try {
             if (isCreating) {
@@ -182,6 +215,27 @@ function SalePage() {
 
         doc.save(`invoice-${activeOrder.orderId}.pdf`);
         setIsModalOpen(false);
+    };
+
+    const handlePlanProduction = async () => {
+        if (!isCreating && activeOrder && warningPayload) {
+            try {
+                await updateStoreOrderApi(activeOrder.id, { ...warningPayload, status: 'Pending' });
+                await loadBackendData();
+                setIsModalOpen(false);
+                setShowWarningModal(false);
+            } catch (err) {
+                console.error("Error updating order to pending", err);
+            }
+        } else {
+            setShowWarningModal(false);
+        }
+    };
+
+    const handleKeepOriginalOrder = () => {
+        const clonedOriginals = originalItems.map(item => ({ ...item, uniqueId: Math.random() }));
+        setEditableItems(clonedOriginals);
+        setShowWarningModal(false);
     };
 
     const handleFlavourEnter = (index) => {
@@ -483,6 +537,22 @@ function SalePage() {
                             <button className="btn-primary" onClick={handleSaveAndInvoice}>Generate Invoice & Sale 🧾</button>
                         </div>
 
+                    </div>
+                </div>
+            )}
+
+            {/* Warning Popup for Negative Stock */}
+            {showWarningModal && (
+                <div className="overlay open" style={{ zIndex: 1100 }}>
+                    <div className="modal" style={{ width: '400px', textAlign: 'center' }}>
+                        <h3 style={{ color: 'var(--red)', marginBottom: '15px' }}>Stock Alert</h3>
+                        <p style={{ marginBottom: '25px', lineHeight: '1.5' }}>
+                            One or more items are not in stock.
+                        </p>
+                        <div className="modal-actions" style={{ justifyContent: 'center', gap: '15px' }}>
+                            <button className="btn-ghost" onClick={handleKeepOriginalOrder}>Keep Original Order</button>
+                            <button className="btn-primary" onClick={handlePlanProduction}>Plan Production</button>
+                        </div>
                     </div>
                 </div>
             )}
