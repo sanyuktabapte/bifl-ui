@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import AutocompleteInput from '../../../components/common/AutocompleteInput';
+import { parseOrderPdfApi } from '../../../services/storeOrderService';
 
-function OrderModal({ isOpen, onClose, stores, orders, flavours = [], onSave, editingOrder }) {
+function OrderModal({ isOpen, onClose, stores = [], orders, flavours = [], onSave, editingOrder }) {
     const handleModalContentClick = (e) => {
         e.stopPropagation();
     };
@@ -9,8 +10,12 @@ function OrderModal({ isOpen, onClose, stores, orders, flavours = [], onSave, ed
     const [store, setStore] = useState('');
     const [date, setDate] = useState('');
     const [rows, setRows] = useState([{ id: 1, name: '', code: '', orderQuantity: '', error: false }]);
+    const [isParsingPdf, setIsParsingPdf] = useState(false);
+    const [parseStatus, setParseStatus] = useState(null);
+
     const lastInputRef = useRef(null);
     const kgInputRefs = useRef([]);
+    const fileInputRef = useRef(null);
     const [focusTarget, setFocusTarget] = useState('flavour');
 
     const { totalKg, totaldol } = useMemo(() => {
@@ -26,6 +31,9 @@ function OrderModal({ isOpen, onClose, stores, orders, flavours = [], onSave, ed
 
     useEffect(() => {
         if (isOpen) {
+            setIsParsingPdf(false);
+            setParseStatus(null);
+
             if (editingOrder) {
                 setStore(editingOrder.store || '');
                 setDate(editingOrder.orderDate || new Date().toISOString().split('T')[0]);
@@ -75,6 +83,81 @@ function OrderModal({ isOpen, onClose, stores, orders, flavours = [], onSave, ed
             }
         }
     }, [isOpen, editingOrder, flavours]);
+
+    const handlePdfUpload = async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+
+        // Reset the file input so the same file can be selected again if desired
+        e.target.value = '';
+
+        setIsParsingPdf(true);
+        setParseStatus(null);
+
+        try {
+            const parsedData = await parseOrderPdfApi(file);
+
+            // 1. Auto-select Store Name
+            if (parsedData.storeName || parsedData.storeId) {
+                const matchedStoreObj = stores.find(s =>
+                    (parsedData.storeId && s.id === parsedData.storeId) ||
+                    (s.name && s.name.toLowerCase() === parsedData.storeName?.toLowerCase()) ||
+                    (s.name && parsedData.storeName && parsedData.storeName.toLowerCase().includes(s.name.toLowerCase()))
+                );
+
+                if (matchedStoreObj) {
+                    setStore(matchedStoreObj.name);
+                } else if (parsedData.storeName) {
+                    setStore(parsedData.storeName);
+                }
+            }
+
+            // 2. Auto-fill Order Date
+            if (parsedData.orderDate) {
+                setDate(parsedData.orderDate);
+            }
+
+            // 3. Auto-populate Flavours Request Table
+            if (parsedData.items && parsedData.items.length > 0) {
+                const newRows = parsedData.items.map((item, index) => {
+                    const itemCode = item.flavourCode || item.flavourId || '';
+                    const itemName = item.flavourName || '';
+
+                    const matchedFlavour = flavours.find(f =>
+                        (itemCode && f.code?.toLowerCase() === itemCode.toLowerCase()) ||
+                        (itemName && f.name?.toLowerCase() === itemName.toLowerCase())
+                    );
+
+                    return {
+                        id: Date.now() + index + Math.random(),
+                        name: matchedFlavour ? matchedFlavour.name : itemName,
+                        code: matchedFlavour ? matchedFlavour.code : itemCode,
+                        orderQuantity: item.kg !== undefined && item.kg !== null ? item.kg : '',
+                        error: false
+                    };
+                });
+
+                setRows(newRows);
+                setParseStatus({
+                    type: 'success',
+                    message: `✓ Extracted ${parsedData.items.length} item(s) from PDF`
+                });
+            } else {
+                setParseStatus({
+                    type: 'warning',
+                    message: 'PDF parsed, but no flavor lines were detected.'
+                });
+            }
+        } catch (err) {
+            console.error("Failed to parse PDF order:", err);
+            setParseStatus({
+                type: 'error',
+                message: err.message || 'Failed to parse PDF. Please verify the document format.'
+            });
+        } finally {
+            setIsParsingPdf(false);
+        }
+    };
 
     useEffect(() => {
         if (focusTarget === 'flavour' && lastInputRef.current) {
@@ -202,6 +285,54 @@ function OrderModal({ isOpen, onClose, stores, orders, flavours = [], onSave, ed
             <div className="modal" onClick={handleModalContentClick} style={{ width: '660px', overflow: 'visible' }}>
                 <h2 id="modalTitle">{editingOrder ? 'Edit Store Order' : 'New Store Order'}</h2>
                 <div className="modal-sub">Enter the store, order date, and requested flavour quantities.</div>
+
+                {/* PDF Order Upload Banner */}
+                <div className="pdf-upload-section">
+                    <input
+                        type="file"
+                        ref={fileInputRef}
+                        accept=".pdf,application/pdf"
+                        style={{ display: 'none' }}
+                        onChange={handlePdfUpload}
+                    />
+                    <div className="pdf-upload-header">
+                        <button
+                            type="button"
+                            className="btn-pdf-upload"
+                            onClick={() => fileInputRef.current?.click()}
+                            disabled={isParsingPdf}
+                        >
+                            {isParsingPdf ? (
+                                <>
+                                    <span className="pdf-spinner"></span>
+                                    <span>Parsing PDF Order...</span>
+                                </>
+                            ) : (
+                                <>
+                                    <span className="pdf-icon">📄</span>
+                                    <span>Upload Order PDF</span>
+                                </>
+                            )}
+                        </button>
+                        <span className="pdf-upload-desc">
+                            Auto-fills store, order date, and requested flavours from PDF
+                        </span>
+                    </div>
+
+                    {parseStatus && (
+                        <div className={`pdf-status-banner ${parseStatus.type}`}>
+                            <span>{parseStatus.message}</span>
+                            <button
+                                type="button"
+                                className="pdf-status-dismiss"
+                                onClick={() => setParseStatus(null)}
+                                title="Dismiss"
+                            >
+                                ✕
+                            </button>
+                        </div>
+                    )}
+                </div>
 
                 <div className="row" style={{ overflow: 'visible', marginBottom: '1.25rem' }}>
                     <div className="field" style={{ position: 'relative' }}>

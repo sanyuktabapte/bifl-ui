@@ -68,3 +68,25 @@ export const updateOrderStatusApi = async (id, status) => {
     }
     return response.json();
 };
+
+export const parseOrderPdfApi = async (file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const response = await fetch(`${API_BASE_URL}/parse-pdf`, {
+        method: 'POST',
+        body: formData,
+    });
+    if (!response.ok) {
+        let errMsg = `Failed to parse PDF (${response.status}: ${response.statusText})`;
+        try {
+            const errJson = await response.json();
+            if (errJson && errJson.error) {
+                errMsg = errJson.error;
+            }
+        } catch (_) {}
+        throw new Error(errMsg);
+    }
+    return response.json();
+};
+

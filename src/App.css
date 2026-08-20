@@ -383,6 +383,119 @@ tbody tr:hover {
   margin-bottom: 18px;
 }
 
+/* PDF Order Upload Section in Order Modal */
+.pdf-upload-section {
+  background: #F8FAFC;
+  border: 1px dashed #CBD5E1;
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 16px;
+  transition: border-color 0.2s, background-color 0.2s;
+}
+
+.pdf-upload-section:hover {
+  border-color: var(--blue);
+  background: #F1F6FD;
+}
+
+.pdf-upload-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.btn-pdf-upload {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #FFFFFF;
+  color: var(--blue-deep);
+  border: 1px solid var(--line);
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  transition: all 0.15s ease;
+}
+
+.btn-pdf-upload:hover:not(:disabled) {
+  background: var(--blue);
+  color: #FFFFFF;
+  border-color: var(--blue);
+}
+
+.btn-pdf-upload:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.pdf-upload-desc {
+  font-size: 11.5px;
+  color: var(--ink-soft);
+}
+
+.pdf-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(46, 111, 219, 0.2);
+  border-top-color: var(--blue-deep);
+  border-radius: 50%;
+  animation: pdf-spin 0.7s linear infinite;
+  display: inline-block;
+}
+
+@keyframes pdf-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.pdf-status-banner {
+  margin-top: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  line-height: 1.4;
+}
+
+.pdf-status-banner.success {
+  background: #ECFDF5;
+  color: #065F46;
+  border: 1px solid #A7F3D0;
+}
+
+.pdf-status-banner.warning {
+  background: #FFFBEB;
+  color: #92400E;
+  border: 1px solid #FDE68A;
+}
+
+.pdf-status-banner.error {
+  background: #FEF2F2;
+  color: #991B1B;
+  border: 1px solid #FECACA;
+}
+
+.pdf-status-dismiss {
+  background: none;
+  border: none;
+  font-size: 13px;
+  cursor: pointer;
+  padding: 0 4px;
+  color: inherit;
+  opacity: 0.6;
+}
+
+.pdf-status-dismiss:hover {
+  opacity: 1;
+}
+
 .modal .row {
   display: flex;
   gap: 12px;
