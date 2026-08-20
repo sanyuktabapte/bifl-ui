@@ -479,7 +479,7 @@ input.invalid {
   width: 100%;
 }
 
-.flavor-table .dole-val {
+.flavor-table .dol-val {
   font-weight: 600;
   color: var(--blue-deep);
   padding-top: 9px;
@@ -970,8 +970,8 @@ input.invalid {
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
 }
 
-.dole-val,
-.flavor-table .dole-val {
+.dol-val,
+.flavor-table .dol-val {
   font-size: 13.5px;
   font-weight: 700;
   color: #1e40af;

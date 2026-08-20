@@ -11,7 +11,7 @@ const BatchDetailsModal = ({ isOpen, plan, onClose, onDownload }) => {
 
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '20px', fontSize: '14px', background: '#f8fafc', padding: '16px', borderRadius: '8px', border: '1px solid var(--line)' }}>
                     <div>
-                        <strong>Batch Number:</strong> {plan.batchNumber}
+                        <strong>Batch Number:</strong> {plan.batchNumber ? (String(plan.batchNumber).startsWith('#') ? plan.batchNumber : `#${plan.batchNumber}`) : ''}
                     </div>
                     <div>
                         <strong>Plan Date:</strong> {plan.planDate}

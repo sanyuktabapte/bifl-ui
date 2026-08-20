@@ -22,7 +22,7 @@ const ProductionBatchesTab = ({ completedBatches, handleViewBatch, handleDownloa
                         ) : (
                             completedBatches.map((plan) => (
                                 <tr key={plan.id}>
-                                    <td><strong>{plan.batchNumber}</strong></td>
+                                    <td><strong>{plan.batchNumber ? (String(plan.batchNumber).startsWith('#') ? plan.batchNumber : `#${plan.batchNumber}`) : ''}</strong></td>
                                     <td>{plan.planDate}</td>
                                     <td><span className="status completed">COMPLETED</span></td>
                                     <td className="actions-cell">

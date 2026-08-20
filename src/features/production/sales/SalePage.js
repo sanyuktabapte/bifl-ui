@@ -1,10 +1,17 @@
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
-import { fetchAllSaleOrders, completeSaleOrderApi, createAndCompleteSaleApi } from '../../../services/saleService';
+import {
+    fetchAllSaleOrders,
+    completeSaleOrderApi,
+    createAndCompleteSaleApi,
+    dispatchOrderApi,
+    convertToSaleApi
+} from '../../../services/saleService';
 import { updateStoreOrderApi } from '../../../services/storeOrderService';
 import { fetchAdminDashboard } from '../../../services/adminService';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import AutocompleteInput from '../../../components/common/AutocompleteInput';
+import DispatchModal from './DispatchModal';
 
 function SalePage() {
     const [originalItems, setOriginalItems] = useState([]);
@@ -13,10 +20,14 @@ function SalePage() {
     const [orders, setOrders] = useState([]);
     const [stores, setStores] = useState([]);
     const [flavours, setFlavours] = useState([]);
-    const [filters, setFilters] = useState({ store: '', fromDate: '', toDate: '' });
+    const [filters, setFilters] = useState({ store: '', fromDate: '', toDate: '', status: 'ALL' });
     const [sortConfig, setSortConfig] = useState({ key: 'orderDate', direction: 'descending' });
 
-    // Modal State Management
+    // FIFO Dispatch Modal State
+    const [isDispatchModalOpen, setIsDispatchModalOpen] = useState(false);
+    const [selectedDispatchOrder, setSelectedDispatchOrder] = useState(null);
+
+    // Convert / Edit Modal State Management
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [activeOrder, setActiveOrder] = useState(null);
     const [editableItems, setEditableItems] = useState([]);
@@ -60,7 +71,7 @@ function SalePage() {
     }, [isModalOpen, editableItems.length]);
 
     const resetFilters = useCallback(() => {
-        setFilters({ store: '', fromDate: '', toDate: '' });
+        setFilters({ store: '', fromDate: '', toDate: '', status: 'ALL' });
     }, []);
 
     const requestSort = useCallback((key) => {
@@ -78,26 +89,141 @@ function SalePage() {
         return '';
     };
 
-    const openSaleModal = (order) => {
-        setIsCreating(false);
-        setActiveOrder({
-            id: order.id,
-            orderId: order.orderId || `SO-${order.id}`,
-            store: order.masterStore?.name || '',
-            storeId: order.masterStore?.id,
-            orderDate: order.orderDate,
-            status: order.status,
-            batch: order.batch || 'NA'
+    // 🚚 Open Dispatch Modal with FIFO Preview
+    const handleOpenDispatch = (order) => {
+        setSelectedDispatchOrder(order);
+        setIsDispatchModalOpen(true);
+    };
+
+    // 🚚 Confirm & Dispatch Order
+    const handleConfirmDispatch = async (payload) => {
+        if (!selectedDispatchOrder) return;
+        try {
+            await dispatchOrderApi(selectedDispatchOrder.id, payload);
+            setIsDispatchModalOpen(false);
+            setSelectedDispatchOrder(null);
+            await loadBackendData();
+        } catch (err) {
+            console.error("Error dispatching order:", err);
+            alert("Dispatch failed: " + err.message);
+        }
+    };
+
+    // ✏️ Convert to Sale (Mark Completed)
+    const handleConvertToSale = async (order) => {
+        try {
+            await convertToSaleApi(order.id);
+            await loadBackendData();
+        } catch (err) {
+            console.error("Error converting to sale:", err);
+            alert("Failed to convert to sale: " + err.message);
+        }
+    };
+
+    // 📄 Download PDF Invoice
+    const handleDownloadInvoice = (order) => {
+        const doc = new jsPDF();
+        doc.setFontSize(22);
+        doc.text('Tax Invoice / Sale Bill', 14, 22);
+
+        const storeName = order.masterStore?.name || order.store || 'NA';
+        const formattedOrderId = order.orderId ? `SO-${order.orderId}` : `SO-${order.id}`;
+
+        doc.setFontSize(11);
+        doc.text(`Invoice / Order: ${formattedOrderId}`, 14, 32);
+        doc.text(`Store: ${storeName}`, 14, 38);
+        doc.text(`Order Date: ${order.orderDate || 'NA'}`, 14, 44);
+        doc.text(`Completed Date: ${order.completedDate || 'NA'}`, 14, 50);
+
+        const tableColumn = ["#", "Flavour", "Quantity (KG)", "Dol", "Unit Price", "Total Amount"];
+        const tableRows = [];
+        let totalKg = 0;
+        let totalDol = 0;
+        let totalAmount = 0;
+
+        // Aggregate by flavour in case items were split across batches
+        const flavourMap = new Map();
+        (order.flavours || []).forEach(item => {
+            const key = item.flavourCode || item.flavourName;
+            const existing = flavourMap.get(key);
+            const qty = parseFloat(item.orderQuantity) || 0;
+            if (existing) {
+                existing.quantity += qty;
+            } else {
+                flavourMap.set(key, {
+                    code: item.flavourCode,
+                    name: item.flavourName || item.flavourCode,
+                    quantity: qty
+                });
+            }
         });
-        const initialItems = (order.flavours || []).map(f => ({
-            uniqueId: Math.random(),
-            name: f.flavourName || '',
-            code: f.flavourCode || '',
-            orderQuantity: f.orderQuantity || ''
-        }));
-        setEditableItems(initialItems);
-        setOriginalItems(JSON.parse(JSON.stringify(initialItems)));
-        setIsModalOpen(true);
+
+        let index = 1;
+        flavourMap.forEach((item) => {
+            const flavour = flavours.find(f => (f.name && item.name && f.name.toLowerCase() === item.name.toLowerCase()) || f.code === item.code);
+            const price = flavour?.price || 0;
+            const quantity = item.quantity;
+            const dol = Math.floor(quantity / 3) || 0;
+            const amount = quantity * price;
+
+            totalKg += quantity;
+            totalDol += dol;
+            totalAmount += amount;
+
+            const rowData = [
+                index++,
+                item.name,
+                `${quantity} kg`,
+                `${dol} dol`,
+                `Rs. ${price}`,
+                `Rs. ${amount.toLocaleString()}`
+            ];
+            tableRows.push(rowData);
+        });
+
+        autoTable(doc, {
+            head: [tableColumn],
+            body: tableRows,
+            theme: 'grid',
+            headStyles: {
+                fillColor: [30, 41, 59],
+                textColor: [255, 255, 255],
+                fontStyle: 'bold',
+                halign: 'center'
+            },
+            styles: {
+                fontSize: 9,
+                cellPadding: 4,
+                lineColor: [226, 232, 240],
+                lineWidth: 0.1
+            },
+            columnStyles: {
+                0: { halign: 'center', cellWidth: 12 },
+                1: { halign: 'left', fontStyle: 'bold' },
+                2: { halign: 'right', cellWidth: 32 },
+                3: { halign: 'right', cellWidth: 24 },
+                4: { halign: 'right', cellWidth: 28 },
+                5: { halign: 'right', fontStyle: 'bold', cellWidth: 35 }
+            },
+            foot: [
+                [
+                    { content: 'Grand Total', colSpan: 2, styles: { halign: 'right', fontStyle: 'bold' } },
+                    { content: `${totalKg} kg`, styles: { halign: 'right', fontStyle: 'bold' } },
+                    { content: `${totalDol} dol`, styles: { halign: 'right', fontStyle: 'bold' } },
+                    { content: '', styles: { fontStyle: 'bold' } },
+                    { content: `Rs. ${totalAmount.toLocaleString()}`, styles: { halign: 'right', fontStyle: 'bold' } }
+                ]
+            ],
+            footStyles: {
+                fillColor: [241, 245, 249],
+                textColor: [15, 23, 42],
+                fontStyle: 'bold'
+            },
+            startY: 56,
+            showFoot: 'lastPage',
+        });
+
+        doc.save(`invoice-${formattedOrderId}.pdf`);
     };
 
     const handleAddNewSale = () => {
@@ -110,7 +236,9 @@ function SalePage() {
             status: 'Pending',
             batch: 'NA'
         });
-        setEditableItems([{ uniqueId: Math.random(), name: '', code: '', orderQuantity: '' }]);
+        const initial = [{ uniqueId: Math.random(), name: '', code: '', orderQuantity: '' }];
+        setEditableItems(initial);
+        setOriginalItems(initial);
         setIsModalOpen(true);
     };
 
@@ -193,22 +321,48 @@ function SalePage() {
         editableItems.forEach((item, index) => {
             const flavour = flavours.find(f => f.name === item.name);
             const price = flavour?.price || 0;
-            const dole = Math.floor(parseFloat(item.orderQuantity) / 3) || 0;
+            const dol = Math.floor(parseFloat(item.orderQuantity) / 3) || 0;
             const amount = (parseFloat(item.orderQuantity) || 0) * price;
-            const rowData = [index + 1, item.name, item.orderQuantity, dole, price, amount.toLocaleString()];
+            const rowData = [index + 1, item.name, item.orderQuantity, dol, price, amount.toLocaleString()];
             tableRows.push(rowData);
         });
 
         autoTable(doc, {
             head: [tableColumn],
             body: tableRows,
+            theme: 'grid',
+            headStyles: {
+                fillColor: [30, 41, 59],
+                textColor: [255, 255, 255],
+                fontStyle: 'bold',
+                halign: 'center'
+            },
+            styles: {
+                fontSize: 9,
+                cellPadding: 4,
+                lineColor: [226, 232, 240],
+                lineWidth: 0.1
+            },
+            columnStyles: {
+                0: { halign: 'center', cellWidth: 12 },
+                1: { halign: 'left', fontStyle: 'bold' },
+                2: { halign: 'right', cellWidth: 32 },
+                3: { halign: 'right', cellWidth: 24 },
+                4: { halign: 'right', cellWidth: 28 },
+                5: { halign: 'right', fontStyle: 'bold', cellWidth: 35 }
+            },
             foot: [
                 [{ content: 'Total', colSpan: 2, styles: { halign: 'right', fontStyle: 'bold' } },
-                { content: String(totalKg), styles: { fontStyle: 'bold' } },
-                { content: String(totalDol), styles: { fontStyle: 'bold' } },
+                { content: `${totalKg} kg`, styles: { halign: 'right', fontStyle: 'bold' } },
+                { content: `${totalDol} dol`, styles: { halign: 'right', fontStyle: 'bold' } },
                 { content: '', styles: { fontStyle: 'bold' } },
-                { content: totalAmount.toLocaleString(), styles: { fontStyle: 'bold' } }]
+                { content: `Rs. ${totalAmount.toLocaleString()}`, styles: { halign: 'right', fontStyle: 'bold' } }]
             ],
+            footStyles: {
+                fillColor: [241, 245, 249],
+                textColor: [15, 23, 42],
+                fontStyle: 'bold'
+            },
             startY: 50,
             showFoot: 'lastPage',
         });
@@ -353,19 +507,20 @@ function SalePage() {
         if (filters.toDate) {
             filteredItems = filteredItems.filter(order => new Date(order.orderDate) <= new Date(filters.toDate));
         }
+        if (filters.status && filters.status !== 'ALL') {
+            filteredItems = filteredItems.filter(order => order.status && order.status.toLowerCase() === filters.status.toLowerCase());
+        } else {
+            // Only active in-flight orders: ready & dispatched
+            filteredItems = filteredItems.filter(order => ['ready', 'dispatched'].includes((order.status || '').toLowerCase()));
+        }
         return filteredItems;
     }, [orders, filters]);
 
     const pendingOrders = useMemo(() => {
-        const pending = [];
-        filteredOrders.forEach(order => {
-            if (order.status === 'Ready') {
-                pending.push(order);
-            }
-        });
+        const list = [...filteredOrders];
 
         if (sortConfig.key) {
-            pending.sort((a, b) => {
+            list.sort((a, b) => {
                 const valA = sortConfig.key === 'store' ? (a.masterStore?.name || a.store || '') : a[sortConfig.key];
                 const valB = sortConfig.key === 'store' ? (b.masterStore?.name || b.store || '') : b[sortConfig.key];
                 if (valA < valB) return sortConfig.direction === 'ascending' ? -1 : 1;
@@ -373,7 +528,7 @@ function SalePage() {
                 return 0;
             });
         }
-        return pending;
+        return list;
     }, [filteredOrders, sortConfig]);
 
     return (
@@ -397,6 +552,14 @@ function SalePage() {
                     />
                 </div>
                 <div className="field">
+                    <label>Status</label>
+                    <select name="status" value={filters.status} onChange={handleFilterChange} style={{ height: '40px', borderRadius: '6px', border: '1px solid var(--line)', padding: '0 10px', background: 'var(--card)', color: 'var(--ink)' }}>
+                        <option value="ALL">All Active Statuses (Ready, Dispatched)</option>
+                        <option value="Ready">Ready</option>
+                        <option value="Dispatched">Dispatched</option>
+                    </select>
+                </div>
+                <div className="field">
                     <label>From Date</label>
                     <input type="date" name="fromDate" value={filters.fromDate} onChange={handleFilterChange} />
                 </div>
@@ -407,40 +570,97 @@ function SalePage() {
                 <button className="btn-ghost" onClick={resetFilters}>Reset</button>
             </div>
 
-            <table>
-                <thead>
-                    <tr>
-                        <th className="sortable" onClick={() => requestSort('id')}>ORDER ID <span className="sort-arrow">{getSortIndicator('id')}</span></th>
-                        <th className="sortable" onClick={() => requestSort('orderDate')}>ORDER DATE <span className="sort-arrow">{getSortIndicator('orderDate')}</span></th>
-                        <th className="sortable" onClick={() => requestSort('store')}>STORE NAME <span className="sort-arrow">{getSortIndicator('store')}</span></th>
-                        <th>STATUS</th>
-                        <th>ACTIONS</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {pendingOrders.length === 0 ? (
+            <div className="table-responsive-wrapper" style={{ background: 'var(--card)', borderRadius: 'var(--radius)', border: '1px solid var(--line)', overflow: 'hidden' }}>
+                <table>
+                    <thead>
                         <tr>
-                            <td colSpan="5" style={{ textAlign: 'center', color: 'var(--ink-soft)', padding: '24px', fontStyle: 'italic', fontWeight: '500' }}>
-                                No ready orders
-                            </td>
+                            <th className="sortable" onClick={() => requestSort('id')}>ORDER ID <span className="sort-arrow">{getSortIndicator('id')}</span></th>
+                            <th className="sortable" onClick={() => requestSort('orderDate')}>ORDER DATE <span className="sort-arrow">{getSortIndicator('orderDate')}</span></th>
+                            <th className="sortable" onClick={() => requestSort('store')}>STORE NAME <span className="sort-arrow">{getSortIndicator('store')}</span></th>
+                            <th style={{ textAlign: 'center' }}>STATUS</th>
+                            <th style={{ textAlign: 'center', width: '220px' }}>ACTIONS</th>
                         </tr>
-                    ) : (
-                        pendingOrders.map((order, i) => (
-                            <tr key={order.id || i}>
-                                <td>{order.orderId || order.id}</td>
-                                <td>{order.orderDate}</td>
-                                <td><strong>{order.masterStore?.name || order.store || 'NA'}</strong></td>
-                                <td><span className="status ready">{order.status}</span></td>
-                                <td className="actions-cell">
-                                    <button className="btn-primary" onClick={() => openSaleModal(order)}>
-                                        Convert to Sale ✏️
-                                    </button>
+                    </thead>
+                    <tbody>
+                        {pendingOrders.length === 0 ? (
+                            <tr>
+                                <td colSpan="5" style={{ textAlign: 'center', color: 'var(--ink-soft)', padding: '30px', fontStyle: 'italic', fontWeight: '500' }}>
+                                    No active in-flight orders found matching filter criteria.
                                 </td>
                             </tr>
-                        ))
-                    )}
-                </tbody>
-            </table>
+                        ) : (
+                            pendingOrders.map((order, i) => {
+                                const status = (order.status || '').toLowerCase();
+                                const formattedId = order.orderId ? `SO-${order.orderId}` : `SO-${order.id}`;
+
+                                return (
+                                    <tr key={order.id || i}>
+                                        <td style={{ fontWeight: 600, color: 'var(--blue-deep)' }}>{formattedId}</td>
+                                        <td>{order.orderDate}</td>
+                                        <td><strong>{order.masterStore?.name || order.store || 'NA'}</strong></td>
+                                        <td style={{ textAlign: 'center' }}>
+                                            {status === 'ready' && (
+                                                <span style={{ background: '#E0F2FE', color: '#0369A1', padding: '4px 10px', borderRadius: '6px', fontWeight: 700, fontSize: '12px' }}>
+                                                    READY
+                                                </span>
+                                            )}
+                                            {status === 'dispatched' && (
+                                                <span style={{ background: '#EDE9FE', color: '#6D28D9', padding: '4px 10px', borderRadius: '6px', fontWeight: 700, fontSize: '12px' }}>
+                                                    DISPATCHED
+                                                </span>
+                                            )}
+                                            {!['ready', 'dispatched'].includes(status) && (
+                                                <span className="status ready">{order.status}</span>
+                                            )}
+                                        </td>
+                                        <td className="actions-cell" style={{ textAlign: 'center' }}>
+                                            {status === 'ready' && (
+                                                <button
+                                                    className="btn-primary"
+                                                    style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '6px 14px' }}
+                                                    onClick={() => handleOpenDispatch(order)}
+                                                >
+                                                    🚚 Dispatch
+                                                </button>
+                                            )}
+                                            {status === 'dispatched' && (
+                                                <button
+                                                    className="btn-primary"
+                                                    style={{ background: '#4F46E5', borderColor: '#4338CA', display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '6px 14px' }}
+                                                    onClick={() => handleConvertToSale(order)}
+                                                >
+                                                    Convert to Sale ✏️
+                                                </button>
+                                            )}
+                                            {status === 'completed' && (
+                                                <button
+                                                    className="btn-ghost"
+                                                    style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '6px 14px' }}
+                                                    onClick={() => handleDownloadInvoice(order)}
+                                                >
+                                                    📄 Invoice
+                                                </button>
+                                            )}
+                                        </td>
+                                    </tr>
+                                );
+                            })
+                        )}
+                    </tbody>
+                </table>
+            </div>
+
+            {/* ================= FIFO DISPATCH BREAKDOWN MODAL ================= */}
+            <DispatchModal
+                isOpen={isDispatchModalOpen}
+                order={selectedDispatchOrder}
+                flavours={flavours}
+                onConfirmDispatch={handleConfirmDispatch}
+                onClose={() => {
+                    setIsDispatchModalOpen(false);
+                    setSelectedDispatchOrder(null);
+                }}
+            />
 
             {/* ================= MODAL DIALOG COMPONENT ================= */}
             {isModalOpen && activeOrder && (
@@ -504,10 +724,10 @@ function SalePage() {
                                                         onChange={(e) => handleItemChange(item.uniqueId, 'orderQuantity', e.target.value)}
                                                         onKeyDown={(e) => handleKgEnter(e, index)} className="table-input" style={{ textAlign: 'center' }} />
                                                 </td>
-                                                <td className="dole-val" style={{ textAlign: 'center' }}>{Math.floor(item.orderQuantity / 3) || 0}</td>
-                                                <td className="dole-val" style={{ textAlign: 'center' }}>{amount.toLocaleString()}</td>
+                                                <td className="dol-val" style={{ textAlign: 'center' }}>{Math.floor(item.orderQuantity / 3) || 0}</td>
+                                                <td className="dol-val" style={{ textAlign: 'center' }}>{amount.toLocaleString()}</td>
                                                 <td
-                                                    className="dole-val"
+                                                    className="dol-val"
                                                     style={{ textAlign: 'center', color: remainingStock >= 0 ? 'var(--green)' : 'var(--red)', fontWeight: '600' }}
                                                 >
                                                     {remainingStock}

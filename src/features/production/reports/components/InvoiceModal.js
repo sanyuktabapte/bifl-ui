@@ -37,7 +37,7 @@ const InvoiceModal = ({ isOpen, order, flavours, onClose, onDownload }) => {
                             const flavour = flavours.find(f => f.name.toLowerCase() === item.flavourName.toLowerCase() || f.code === item.flavourCode);
                             const price = flavour?.price || 0;
                             const quantity = parseFloat(item.orderQuantity) || 0;
-                            const dole = Math.floor(quantity / 3) || 0;
+                            const dol = Math.floor(quantity / 3) || 0;
                             const amount = quantity * price;
 
                             return (
@@ -45,7 +45,7 @@ const InvoiceModal = ({ isOpen, order, flavours, onClose, onDownload }) => {
                                     <td>{index + 1}</td>
                                     <td><strong>{item.flavourName}</strong></td>
                                     <td style={{ textAlign: 'center' }}>{quantity}</td>
-                                    <td style={{ textAlign: 'center' }}>{dole}</td>
+                                    <td style={{ textAlign: 'center' }}>{dol}</td>
                                     <td style={{ textAlign: 'center' }}>{price}</td>
                                     <td style={{ textAlign: 'center' }}>{amount.toLocaleString()}</td>
                                 </tr>

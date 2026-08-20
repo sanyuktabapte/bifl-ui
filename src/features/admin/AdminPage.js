@@ -5,6 +5,7 @@ import { fetchAdminDashboard, addStoreApi, addFlavourApi, updateFlavourApi, upda
 import StoreListAccordion from './components/StoreListAccordion';
 import FlavourListAccordion from './components/FlavourListAccordion';
 import StockListAccordion from './components/StockListAccordion';
+import BatchListAccordion from './components/BatchListAccordion';
 import StoreModal from './components/StoreModal';
 import FlavourModal from './components/FlavourModal';
 import StockModal from './components/StockModal';
@@ -13,11 +14,13 @@ export default function AdminPanel() {
     // State Management for Data
     const [stores, setStores] = React.useState([]);
     const [flavours, setFlavours] = React.useState([]);
+    const [batches, setBatches] = React.useState([]);
 
     // Accordion Toggle States
     const [isStoreOpen, setIsStoreOpen] = React.useState(false);
     const [isFlavourOpen, setIsFlavourOpen] = React.useState(false);
     const [isStockOpen, setIsStockOpen] = React.useState(false);
+    const [isBatchOpen, setIsBatchOpen] = React.useState(false);
 
     // Modal Visibility States
     const [isStoreModalOpen, setIsStoreModalOpen] = React.useState(false);
@@ -31,6 +34,7 @@ export default function AdminPanel() {
     const [editingFlavourCode, setEditingFlavourCode] = React.useState(null); // Tracks if modal is in Edit mode
     const [flavourFilter, setFlavourFilter] = React.useState('');
     const [stockFilter, setStockFilter] = React.useState('');
+    const [batchFilter, setBatchFilter] = React.useState('');
 
     // Fetch Dashboard Data from Backend
     const loadDashboardData = useCallback(async () => {
@@ -39,6 +43,7 @@ export default function AdminPanel() {
             if (data) {
                 setFlavours(data.flavourList || []);
                 setStores(data.storeList || []);
+                setBatches(data.batchList || []);
             }
         } catch (err) {
             console.error("Backend error loading admin dashboard:", err);
@@ -193,6 +198,19 @@ export default function AdminPanel() {
         );
     }, [flavours, stockFilter]);
 
+    const filteredBatches = React.useMemo(() => {
+        if (!batchFilter) return batches;
+        const q = batchFilter.toLowerCase();
+        return batches.filter(b =>
+            (b.batchNumber && b.batchNumber.toLowerCase().includes(q)) ||
+            (b.status && b.status.toLowerCase().includes(q)) ||
+            (b.flavours && b.flavours.some(f =>
+                (f.flavourName && f.flavourName.toLowerCase().includes(q)) ||
+                (f.flavourCode && f.flavourCode.toLowerCase().includes(q))
+            ))
+        );
+    }, [batches, batchFilter]);
+
     return (
         <div className="container">
             <div className="page-head">
@@ -232,6 +250,16 @@ export default function AdminPanel() {
                 isOpen={isStockOpen}
                 onToggle={() => setIsStockOpen(!isStockOpen)}
                 onEditStock={openEditStockModal}
+            />
+
+            {/* ================= ACCORDION 4: MASTER BATCHES ================= */}
+            <BatchListAccordion
+                batches={batches}
+                filteredBatches={filteredBatches}
+                batchFilter={batchFilter}
+                setBatchFilter={setBatchFilter}
+                isOpen={isBatchOpen}
+                onToggle={() => setIsBatchOpen(!isBatchOpen)}
             />
 
             {/* ================= MODALS ================= */}

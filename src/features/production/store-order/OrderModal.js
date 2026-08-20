@@ -13,15 +13,15 @@ function OrderModal({ isOpen, onClose, stores, orders, flavours = [], onSave, ed
     const kgInputRefs = useRef([]);
     const [focusTarget, setFocusTarget] = useState('flavour');
 
-    const { totalKg, totalDole } = useMemo(() => {
+    const { totalKg, totaldol } = useMemo(() => {
         return rows.reduce((totals, row) => {
             const kg = parseFloat(row.orderQuantity);
             if (!isNaN(kg)) {
                 totals.totalKg += kg;
-                totals.totalDole += Math.floor(kg / 3);
+                totals.totaldol += Math.floor(kg / 3);
             }
             return totals;
-        }, { totalKg: 0, totalDole: 0 });
+        }, { totalKg: 0, totaldol: 0 });
     }, [rows]);
 
     useEffect(() => {
@@ -34,26 +34,38 @@ function OrderModal({ isOpen, onClose, stores, orders, flavours = [], onSave, ed
                     ? editingOrder.flavours
                     : (editingOrder.orderFlavourList || []);
 
-                const initialRows = itemsToMap.map(item => {
+                const aggregatedMap = new Map();
+                itemsToMap.forEach(item => {
                     const itemCode = item.code || item.flavourCode || '';
-                    const itemName = item.name || '';
+                    const itemName = item.name || item.flavourName || '';
 
                     const matchedFlavour = flavours.find(f =>
-                        (itemCode && f.code.toLowerCase() === itemCode.toLowerCase()) ||
-                        (itemName && f.name.toLowerCase() === itemName.toLowerCase())
+                        (itemCode && f.code?.toLowerCase() === itemCode.toLowerCase()) ||
+                        (itemName && f.name?.toLowerCase() === itemName.toLowerCase())
                     );
 
                     const finalCode = matchedFlavour ? matchedFlavour.code : itemCode;
                     const finalName = matchedFlavour ? matchedFlavour.name : itemName;
+                    const key = (finalCode || finalName).trim().toUpperCase();
 
-                    return {
-                        id: Math.random(),
-                        name: finalName,
-                        code: finalCode,
-                        orderQuantity: item.orderQuantity !== undefined ? item.orderQuantity : '',
-                        error: false
-                    };
+                    const qty = parseFloat(item.orderQuantity) || 0;
+                    if (!key) return;
+
+                    if (aggregatedMap.has(key)) {
+                        const existing = aggregatedMap.get(key);
+                        existing.orderQuantity = (parseFloat(existing.orderQuantity) || 0) + qty;
+                    } else {
+                        aggregatedMap.set(key, {
+                            id: Math.random(),
+                            name: finalName,
+                            code: finalCode,
+                            orderQuantity: qty > 0 ? qty : (item.orderQuantity !== undefined ? item.orderQuantity : ''),
+                            error: false
+                        });
+                    }
                 });
+
+                const initialRows = Array.from(aggregatedMap.values());
 
                 setRows(initialRows.length > 0 ? initialRows : [{ id: 1, name: '', code: '', orderQuantity: '', error: false }]);
             } else {
@@ -187,7 +199,7 @@ function OrderModal({ isOpen, onClose, stores, orders, flavours = [], onSave, ed
 
     return (
         <div className="overlay open">
-            <div className="modal" onClick={handleModalContentClick} style={{ width: '560px', overflow: 'visible' }}>
+            <div className="modal" onClick={handleModalContentClick} style={{ width: '660px', overflow: 'visible' }}>
                 <h2 id="modalTitle">{editingOrder ? 'Edit Store Order' : 'New Store Order'}</h2>
                 <div className="modal-sub">Enter the store, order date, and requested flavour quantities.</div>
 
@@ -217,79 +229,112 @@ function OrderModal({ isOpen, onClose, stores, orders, flavours = [], onSave, ed
                             <tr>
                                 <th style={{ width: '32px' }}>#</th>
                                 <th>Flavour (Priority Code / Name)</th>
-                                <th style={{ width: '90px' }}>KG</th>
-                                <th style={{ width: '80px' }}>Dol</th>
+                                <th style={{ width: '85px' }}>KG</th>
+                                <th style={{ width: '70px' }}>Dol</th>
+                                <th style={{ width: '95px', textAlign: 'center' }}>Stock</th>
                                 <th style={{ width: '30px' }}></th>
                             </tr>
                         </thead>
                         <tbody>
-                            {rows.map((row, index) => (
-                                <tr key={row.id}>
-                                    <td className="rownum">{index + 1}</td>
-                                    <td style={{ position: 'relative' }}>
-                                        <AutocompleteInput
-                                            ref={index === rows.length - 1 ? lastInputRef : null}
-                                            value={getRowDisplayValue(row)}
-                                            onChange={(nameValue, selectedObj) => handleRowChange(row.id, 'name', nameValue, selectedObj)}
-                                            onEnterPress={() => {
-                                                setFocusTarget('flavour');
-                                                handleAddRow();
-                                            }}
-                                            items={flavours}
-                                            error={row.error}
-                                            errorMessage="Duplicate entry"
-                                            placeholder="Type code (e.g. EL, KK) or name..."
-                                        />
-                                    </td>
-                                    <td>
-                                        <input
-                                            type="number"
-                                            ref={el => kgInputRefs.current[index] = el}
-                                            min="0"
-                                            step="3"
-                                            className="flavour-kg"
-                                            placeholder="0"
-                                            value={row.orderQuantity}
-                                            onChange={(e) => handleRowChange(row.id, 'orderQuantity', e.target.value)}
-                                            onKeyDown={(e) => {
-                                                if (e.key === 'Enter') {
-                                                    e.preventDefault();
-                                                    if (index < rows.length - 1) {
-                                                        const nextKgInput = kgInputRefs.current[index + 1];
-                                                        if (nextKgInput) {
-                                                            nextKgInput.focus();
-                                                            if (typeof nextKgInput.select === 'function') {
-                                                                nextKgInput.select();
+                            {rows.map((row, index) => {
+                                const matchedFlavour = flavours.find(f =>
+                                    (row.code && f.code?.toLowerCase() === row.code?.toLowerCase()) ||
+                                    (row.name && f.name?.toLowerCase() === row.name?.toLowerCase())
+                                );
+                                const hasFlavour = !!matchedFlavour || !!row.name || !!row.code;
+                                const currentColdStock = matchedFlavour ? (matchedFlavour.coldRoomStock ?? 0) : null;
+                                const inProcessStock = matchedFlavour ? (matchedFlavour.inProcessStock ?? matchedFlavour.inProcessQuantity ?? 0) : 0;
+                                const orderQty = parseFloat(row.orderQuantity) || 0;
+                                const remainingStock = currentColdStock !== null ? (currentColdStock - orderQty) : (hasFlavour ? -orderQty : null);
+
+                                return (
+                                    <tr key={row.id}>
+                                        <td className="rownum">{index + 1}</td>
+                                        <td style={{ position: 'relative' }}>
+                                            <AutocompleteInput
+                                                ref={index === rows.length - 1 ? lastInputRef : null}
+                                                value={getRowDisplayValue(row)}
+                                                onChange={(nameValue, selectedObj) => handleRowChange(row.id, 'name', nameValue, selectedObj)}
+                                                onEnterPress={() => {
+                                                    setFocusTarget('flavour');
+                                                    handleAddRow();
+                                                }}
+                                                items={flavours}
+                                                error={row.error}
+                                                errorMessage="Duplicate entry"
+                                                placeholder="Type code (e.g. EL, KK) or name..."
+                                            />
+                                        </td>
+                                        <td>
+                                            <input
+                                                type="number"
+                                                ref={el => kgInputRefs.current[index] = el}
+                                                min="0"
+                                                step="3"
+                                                className="flavour-kg"
+                                                placeholder="0"
+                                                value={row.orderQuantity}
+                                                onChange={(e) => handleRowChange(row.id, 'orderQuantity', e.target.value)}
+                                                onKeyDown={(e) => {
+                                                    if (e.key === 'Enter') {
+                                                        e.preventDefault();
+                                                        if (index < rows.length - 1) {
+                                                            const nextKgInput = kgInputRefs.current[index + 1];
+                                                            if (nextKgInput) {
+                                                                nextKgInput.focus();
+                                                                if (typeof nextKgInput.select === 'function') {
+                                                                    nextKgInput.select();
+                                                                }
                                                             }
+                                                        } else {
+                                                            setFocusTarget('kg');
+                                                            handleAddRow();
                                                         }
-                                                    } else {
-                                                        setFocusTarget('kg');
-                                                        handleAddRow();
                                                     }
-                                                }
+                                                }}
+                                            />
+                                        </td>
+                                        <td className="dol-val">{Math.floor(parseFloat(row.orderQuantity) / 3) || 0}</td>
+                                        <td
+                                            className="dol-val"
+                                            style={{
+                                                textAlign: 'center',
+                                                fontWeight: '600',
+                                                whiteSpace: 'nowrap'
                                             }}
-                                        />
-                                    </td>
-                                    <td className="dole-val">{Math.floor(parseFloat(row.orderQuantity) / 3) || 0}</td>
-                                    <td>
-                                        <button
-                                            type="button"
-                                            className="rm-row"
-                                            title="Remove row"
-                                            onClick={() => handleRemoveRow(row.id)}
-                                            style={{ visibility: rows.length > 1 ? 'visible' : 'hidden' }}
                                         >
-                                            ✕
-                                        </button>
-                                    </td>
-                                </tr>
-                            ))}
+                                            {remainingStock !== null ? (
+                                                <>
+                                                    <span style={{ color: remainingStock >= 0 ? 'var(--green)' : 'var(--red)' }}>
+                                                        {remainingStock}
+                                                    </span>
+                                                    <span style={{ color: '#d97706', fontSize: '12px', marginLeft: '3px' }}>
+                                                        ({inProcessStock})
+                                                    </span>
+                                                </>
+                                            ) : '-'}
+                                        </td>
+                                        <td>
+                                            <button
+                                                type="button"
+                                                className="rm-row"
+                                                title="Remove row"
+                                                onClick={() => handleRemoveRow(row.id)}
+                                                style={{ visibility: rows.length > 1 ? 'visible' : 'hidden' }}
+                                            >
+                                                ✕
+                                            </button>
+                                        </td>
+                                    </tr>
+                                );
+                            })}
                         </tbody>
                         <tfoot>
                             <tr className="totals-row">
                                 <td colSpan="2">Total Volume</td>
                                 <td id="totalKg">{Math.round(totalKg)} kg</td>
-                                <td id="totalDole">{totalDole} dol</td>
+                                <td id="totaldol">{totaldol} dol</td>
+                                <td></td>
                                 <td>
                                     <button type="button" className="add-row-btn" title="Add flavour row" onClick={handleAddRow}>+</button>
                                 </td>

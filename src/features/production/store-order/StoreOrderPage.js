@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { masterStoreList as initialStores, masterFlavourList as initialFlavours, storeOrders as initialStoreOrders } from '../../../assets/mockData';
 import OrderModal from './OrderModal';
 import jsPDF from 'jspdf';
 import AutocompleteInput from '../../../components/common/AutocompleteInput';
@@ -147,20 +146,70 @@ function StoreOrderPage() {
         doc.text(`Store: ${order.store || ''}`, 14, 38);
         doc.text(`Date: ${order.orderDate || ''}`, 14, 44);
 
-        const tableColumn = ["#", "Flavour", "KG", "Dol"];
+        const tableColumn = ["#", "Flavour", "Quantity (KG)", "Quantity (Dol)"];
         const tableRows = [];
+        let totalKg = 0;
+        let totalDol = 0;
+        const flavourItems = (order.flavours && order.flavours.length > 0) ? order.flavours : (order.orderFlavourList || []);
+        
+        const aggregatedPdfMap = new Map();
+        flavourItems.forEach(item => {
+            const name = item.name || item.flavourName || '';
+            const key = (item.code || item.flavourCode || name).trim().toUpperCase();
+            const qty = parseFloat(item.orderQuantity) || 0;
+            if (!key) return;
+            if (aggregatedPdfMap.has(key)) {
+                aggregatedPdfMap.get(key).qty += qty;
+            } else {
+                aggregatedPdfMap.set(key, { name, qty });
+            }
+        });
 
-        const flavourItems = order.flavours || [];
-        flavourItems.forEach((item, index) => {
-            const dole = Math.floor(parseFloat(item.orderQuantity) / 3) || 0;
-            const rowData = [index + 1, item.name, item.orderQuantity, dole];
+        let idx = 1;
+        aggregatedPdfMap.forEach(({ name, qty }) => {
+            const dol = Math.floor(qty / 3) || 0;
+            totalKg += qty;
+            totalDol += dol;
+            const rowData = [idx++, name, `${qty} kg`, `${dol} dol`];
             tableRows.push(rowData);
         });
 
         doc.autoTable({
             head: [tableColumn],
             body: tableRows,
+            theme: 'grid',
+            headStyles: {
+                fillColor: [30, 41, 59],
+                textColor: [255, 255, 255],
+                fontStyle: 'bold',
+                halign: 'center'
+            },
+            styles: {
+                fontSize: 9,
+                cellPadding: 4,
+                lineColor: [226, 232, 240],
+                lineWidth: 0.1
+            },
+            columnStyles: {
+                0: { halign: 'center', cellWidth: 15 },
+                1: { halign: 'left' },
+                2: { halign: 'right', cellWidth: 35 },
+                3: { halign: 'right', cellWidth: 35 }
+            },
+            foot: [
+                [
+                    { content: 'Total Volume', colSpan: 2, styles: { halign: 'left', fontStyle: 'bold' } },
+                    { content: `${totalKg} kg`, styles: { halign: 'right', fontStyle: 'bold' } },
+                    { content: `${totalDol} dol`, styles: { halign: 'right', fontStyle: 'bold' } }
+                ]
+            ],
+            footStyles: {
+                fillColor: [241, 245, 249],
+                textColor: [30, 41, 59],
+                fontStyle: 'bold'
+            },
             startY: 50,
+            showFoot: 'lastPage',
         });
 
         doc.save(`order-${order.orderId || order.id}.pdf`);
@@ -193,7 +242,7 @@ function StoreOrderPage() {
             alert("Error: Failed to save order to backend database.");
             handleCloseModal();
         }
-    }, [orders, handleCloseModal, loadBackendData, navigate]);
+    }, [handleCloseModal, loadBackendData, navigate]);
 
     return (
         <div className="container">
@@ -244,23 +293,27 @@ function StoreOrderPage() {
                             </td>
                         </tr>
                     ) : (
-                        filteredAndSortedOrders.map(order => (
-                            <tr key={order.id || order.orderId}>
-                                <td data-label="Order ID">{order.orderId || order.id}</td>
-                                <td data-label="Date">{order.orderDate}</td>
-                                <td data-label="Store">{order.store}</td>
-                                <td data-label="Status"><span className={`status ${(order.status || 'pending').toLowerCase()}`}>{order.status}</span></td>
-                                <td data-label="Actions" className="actions-cell">
-                                    {order.status === 'Pending' && (
-                                        <>
-                                            <button className="btn-icon" onClick={() => handleEdit(order)}>Edit</button>
-                                            <button className="btn-icon delete" onClick={() => handleDelete(order.id || order.orderId)}>Delete</button>
-                                        </>
-                                    )}
-                                    <button className="btn-icon download" onClick={() => handleDownload(order)}>Download</button>
-                                </td>
-                            </tr>
-                        ))
+                        filteredAndSortedOrders.map(order => {
+                            const statusLower = (order.status || '').toLowerCase();
+                            const isEditable = statusLower === 'pending' || statusLower === 'processing';
+                            return (
+                                <tr key={order.id || order.orderId}>
+                                    <td data-label="Order ID">{order.orderId || order.id}</td>
+                                    <td data-label="Date">{order.orderDate}</td>
+                                    <td data-label="Store">{order.store}</td>
+                                    <td data-label="Status"><span className={`status ${statusLower}`}>{order.status}</span></td>
+                                    <td data-label="Actions" className="actions-cell">
+                                        {isEditable && (
+                                            <>
+                                                <button className="btn-icon" onClick={() => handleEdit(order)}>Edit</button>
+                                                <button className="btn-icon delete" onClick={() => handleDelete(order.id || order.orderId)}>Delete</button>
+                                            </>
+                                        )}
+                                        <button className="btn-icon download" onClick={() => handleDownload(order)}>Download</button>
+                                    </td>
+                                </tr>
+                            );
+                        })
                     )}
                 </tbody>
             </table>

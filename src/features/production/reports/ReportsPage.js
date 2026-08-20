@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { fetchPlans } from '../../../services/productionPlanningService';
-import { fetchAllSaleOrders } from '../../../services/saleService';
+import { fetchAllSaleOrders, fetchCompletedSalesApi } from '../../../services/saleService';
 import { fetchAdminDashboard } from '../../../services/adminService';
 import { fetchAllTransfers, deleteTransferApi } from '../../../services/internalTransferService';
+import { fetchBatchesApi } from '../../../services/batchService';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -11,6 +12,7 @@ import ProductionBatchesTab from './components/ProductionBatchesTab';
 import StoreOrdersTab from './components/StoreOrdersTab';
 import SalesTab from './components/SalesTab';
 import InternalTransfersTab from './components/InternalTransfersTab';
+import BatchesReportTab from './components/BatchesReportTab';
 import InvoiceModal from './components/InvoiceModal';
 import BatchDetailsModal from './components/BatchDetailsModal';
 import TransferDetailsModal from './components/TransferDetailsModal';
@@ -19,8 +21,10 @@ function ReportsPage({ initialTab = 'production' }) {
     const [activeTab, setActiveTab] = useState(initialTab);
     const [productionPlans, setProductionPlans] = useState([]);
     const [storeOrders, setStoreOrders] = useState([]);
+    const [completedSalesOrders, setCompletedSalesOrders] = useState([]);
     const [flavours, setFlavours] = useState([]);
     const [transfers, setTransfers] = useState([]);
+    const [batches, setBatches] = useState([]);
     const [loading, setLoading] = useState(false);
 
     const [isViewModalOpen, setIsViewModalOpen] = useState(false);
@@ -39,15 +43,19 @@ function ReportsPage({ initialTab = 'production' }) {
     const loadReportData = async () => {
         setLoading(true);
         try {
-            const [plans, orders, adminData, transferList] = await Promise.all([
+            const [plans, activeOrders, completedOrders, adminData, transferList, batchList] = await Promise.all([
                 fetchPlans().catch(() => []),
                 fetchAllSaleOrders().catch(() => []),
+                fetchCompletedSalesApi().catch(() => []),
                 fetchAdminDashboard().catch(() => null),
-                fetchAllTransfers().catch(() => [])
+                fetchAllTransfers().catch(() => []),
+                fetchBatchesApi().catch(() => [])
             ]);
             setProductionPlans(plans);
-            setStoreOrders(orders);
+            setStoreOrders(activeOrders);
+            setCompletedSalesOrders(completedOrders);
             setTransfers(transferList.sort((a, b) => b.id - a.id));
+            setBatches(batchList || []);
             if (adminData && adminData.flavourList) {
                 setFlavours(adminData.flavourList);
             }
@@ -72,8 +80,8 @@ function ReportsPage({ initialTab = 'production' }) {
     }, [storeOrders]);
 
     const completedSales = useMemo(() => {
-        return storeOrders.filter(o => o.status === 'Completed');
-    }, [storeOrders]);
+        return completedSalesOrders;
+    }, [completedSalesOrders]);
 
     const handleViewSale = (order) => {
         setSelectedSaleOrder(order);
@@ -173,13 +181,39 @@ function ReportsPage({ initialTab = 'production' }) {
         autoTable(doc, {
             head: [tableColumn],
             body: tableRows,
+            theme: 'grid',
+            headStyles: {
+                fillColor: [30, 41, 59],
+                textColor: [255, 255, 255],
+                fontStyle: 'bold',
+                halign: 'center'
+            },
+            styles: {
+                fontSize: 9,
+                cellPadding: 4,
+                lineColor: [226, 232, 240],
+                lineWidth: 0.1
+            },
+            columnStyles: {
+                0: { halign: 'center', cellWidth: 12 },
+                1: { halign: 'left', fontStyle: 'bold' },
+                2: { halign: 'right', cellWidth: 28 },
+                3: { halign: 'right', cellWidth: 28 },
+                4: { halign: 'right', cellWidth: 32 },
+                5: { halign: 'right', fontStyle: 'bold', cellWidth: 28 }
+            },
             foot: [
                 [{ content: 'Total', colSpan: 2, styles: { halign: 'right', fontStyle: 'bold' } },
-                { content: String(totalTarget), styles: { fontStyle: 'bold' } },
-                { content: String(totalActual), styles: { fontStyle: 'bold' } },
-                { content: String(totalCold), styles: { fontStyle: 'bold' } },
-                { content: String(totalFactory), styles: { fontStyle: 'bold' } }]
+                { content: `${totalTarget} kg`, styles: { halign: 'right', fontStyle: 'bold' } },
+                { content: `${totalActual} kg`, styles: { halign: 'right', fontStyle: 'bold' } },
+                { content: `${totalCold} kg`, styles: { halign: 'right', fontStyle: 'bold' } },
+                { content: `${totalFactory} kg`, styles: { halign: 'right', fontStyle: 'bold' } }]
             ],
+            footStyles: {
+                fillColor: [241, 245, 249],
+                textColor: [15, 23, 42],
+                fontStyle: 'bold'
+            },
             startY: 50,
             showFoot: 'lastPage',
         });
@@ -191,44 +225,70 @@ function ReportsPage({ initialTab = 'production' }) {
         const storeName = order.masterStore?.name || order.store || 'NA';
         const doc = new jsPDF();
         doc.setFontSize(20);
-        doc.text('Invoice', 14, 22);
+        doc.text('Tax Invoice / Sale Bill', 14, 22);
 
-        doc.setFontSize(12);
-        doc.text(`Order ID: ${order.orderId || order.id}`, 14, 32);
+        doc.setFontSize(10);
+        doc.text(`Order ID: ${order.orderId ? `SO-${order.orderId}` : `SO-${order.id}`}`, 14, 32);
         doc.text(`Store: ${storeName}`, 14, 38);
         doc.text(`Date: ${order.completedDate || order.orderDate || 'NA'}`, 14, 44);
 
-        const tableColumn = ["#", "Flavour", "KG", "Dol", "Price", "Amount"];
+        const tableColumn = ["#", "Flavour", "Quantity (KG)", "Dol", "Unit Price", "Total Amount"];
         const tableRows = [];
         let totalKg = 0;
         let totalDol = 0;
         let totalAmount = 0;
 
         (order.flavours || []).forEach((item, index) => {
-            const flavour = flavours.find(f => f.name.toLowerCase() === item.flavourName.toLowerCase() || f.code === item.flavourCode);
+            const flavour = flavours.find(f => f.name.toLowerCase() === item.flavourName?.toLowerCase() || f.code === item.flavourCode);
             const price = flavour?.price || 0;
             const quantity = parseFloat(item.orderQuantity) || 0;
-            const dole = Math.floor(quantity / 3) || 0;
+            const dol = Math.floor(quantity / 3) || 0;
             const amount = quantity * price;
 
             totalKg += quantity;
-            totalDol += dole;
+            totalDol += dol;
             totalAmount += amount;
 
-            const rowData = [index + 1, item.flavourName, quantity, dole, price, amount.toLocaleString()];
+            const rowData = [index + 1, item.flavourName, `${quantity} kg`, `${dol} dol`, `Rs. ${price}`, `Rs. ${amount.toLocaleString()}`];
             tableRows.push(rowData);
         });
 
         autoTable(doc, {
             head: [tableColumn],
             body: tableRows,
+            theme: 'grid',
+            headStyles: {
+                fillColor: [30, 41, 59],
+                textColor: [255, 255, 255],
+                fontStyle: 'bold',
+                halign: 'center'
+            },
+            styles: {
+                fontSize: 9,
+                cellPadding: 4,
+                lineColor: [226, 232, 240],
+                lineWidth: 0.1
+            },
+            columnStyles: {
+                0: { halign: 'center', cellWidth: 12 },
+                1: { halign: 'left', fontStyle: 'bold' },
+                2: { halign: 'right', cellWidth: 32 },
+                3: { halign: 'right', cellWidth: 24 },
+                4: { halign: 'right', cellWidth: 28 },
+                5: { halign: 'right', fontStyle: 'bold', cellWidth: 35 }
+            },
             foot: [
-                [{ content: 'Total', colSpan: 2, styles: { halign: 'right', fontStyle: 'bold' } },
-                { content: String(totalKg), styles: { fontStyle: 'bold' } },
-                { content: String(totalDol), styles: { fontStyle: 'bold' } },
+                [{ content: 'Grand Total', colSpan: 2, styles: { halign: 'right', fontStyle: 'bold' } },
+                { content: `${totalKg} kg`, styles: { halign: 'right', fontStyle: 'bold' } },
+                { content: `${totalDol} dol`, styles: { halign: 'right', fontStyle: 'bold' } },
                 { content: '', styles: { fontStyle: 'bold' } },
-                { content: totalAmount.toLocaleString(), styles: { fontStyle: 'bold' } }]
+                { content: `Rs. ${totalAmount.toLocaleString()}`, styles: { halign: 'right', fontStyle: 'bold' } }]
             ],
+            footStyles: {
+                fillColor: [241, 245, 249],
+                textColor: [15, 23, 42],
+                fontStyle: 'bold'
+            },
             startY: 50,
             showFoot: 'lastPage',
         });
@@ -250,33 +310,40 @@ function ReportsPage({ initialTab = 'production' }) {
 
             {/* Navigation Tabs */}
             <div style={{ display: 'flex', gap: '12px', marginBottom: '24px', borderBottom: '1px solid var(--line)', paddingBottom: '8px' }}>
-                <button 
+                <button
                     className={`btn-ghost ${activeTab === 'production' ? 'btn-primary' : ''}`}
                     onClick={() => setActiveTab('production')}
                     style={{ borderBottom: activeTab === 'production' ? '2px solid var(--blue)' : 'none', borderRadius: '4px 4px 0 0' }}
                 >
                     Production Reports
                 </button>
-                <button 
+                <button
                     className={`btn-ghost ${activeTab === 'store-orders' ? 'btn-primary' : ''}`}
                     onClick={() => setActiveTab('store-orders')}
                     style={{ borderBottom: activeTab === 'store-orders' ? '2px solid var(--blue)' : 'none', borderRadius: '4px 4px 0 0' }}
                 >
                     Store Order Reports (Ready)
                 </button>
-                <button 
+                <button
                     className={`btn-ghost ${activeTab === 'sales' ? 'btn-primary' : ''}`}
                     onClick={() => setActiveTab('sales')}
                     style={{ borderBottom: activeTab === 'sales' ? '2px solid var(--blue)' : 'none', borderRadius: '4px 4px 0 0' }}
                 >
                     Sale Completed Reports
                 </button>
-                <button 
+                <button
                     className={`btn-ghost ${activeTab === 'internal-transfers' ? 'btn-primary' : ''}`}
                     onClick={() => setActiveTab('internal-transfers')}
                     style={{ borderBottom: activeTab === 'internal-transfers' ? '2px solid var(--blue)' : 'none', borderRadius: '4px 4px 0 0' }}
                 >
                     Internal Transfers
+                </button>
+                <button
+                    className={`btn-ghost ${activeTab === 'batches' ? 'btn-primary' : ''}`}
+                    onClick={() => setActiveTab('batches')}
+                    style={{ borderBottom: activeTab === 'batches' ? '2px solid var(--blue)' : 'none', borderRadius: '4px 4px 0 0' }}
+                >
+                    Batches
                 </button>
             </div>
 
@@ -285,10 +352,10 @@ function ReportsPage({ initialTab = 'production' }) {
             ) : (
                 <>
                     {activeTab === 'production' && (
-                        <ProductionBatchesTab 
-                            completedBatches={completedBatches} 
-                            handleViewBatch={handleViewBatch} 
-                            handleDownloadBatch={handleDownloadBatch} 
+                        <ProductionBatchesTab
+                            completedBatches={completedBatches}
+                            handleViewBatch={handleViewBatch}
+                            handleDownloadBatch={handleDownloadBatch}
                         />
                     )}
 
@@ -297,44 +364,50 @@ function ReportsPage({ initialTab = 'production' }) {
                     )}
 
                     {activeTab === 'sales' && (
-                        <SalesTab 
-                            completedSales={completedSales} 
-                            handleViewSale={handleViewSale} 
-                            handleDownloadSale={handleDownloadSale} 
+                        <SalesTab
+                            completedSales={completedSales}
+                            handleViewSale={handleViewSale}
+                            handleDownloadSale={handleDownloadSale}
                         />
                     )}
 
                     {activeTab === 'internal-transfers' && (
-                        <InternalTransfersTab 
-                            transfers={transfers} 
-                            handleViewTransfer={handleViewTransfer} 
-                            handleDownloadTransfer={handleDownloadTransfer} 
-                            handleDeleteTransfer={handleDeleteTransfer} 
+                        <InternalTransfersTab
+                            transfers={transfers}
+                            handleViewTransfer={handleViewTransfer}
+                            handleDownloadTransfer={handleDownloadTransfer}
+                            handleDeleteTransfer={handleDeleteTransfer}
+                        />
+                    )}
+
+                    {activeTab === 'batches' && (
+                        <BatchesReportTab
+                            batches={batches}
                         />
                     )}
                 </>
             )}
 
-            <InvoiceModal 
-                isOpen={isViewModalOpen} 
-                order={selectedSaleOrder} 
-                flavours={flavours} 
-                onClose={() => setIsViewModalOpen(false)} 
-                onDownload={handleDownloadSale} 
+            <InvoiceModal
+                isOpen={isViewModalOpen}
+                order={selectedSaleOrder}
+                flavours={flavours}
+                onClose={() => setIsViewModalOpen(false)}
+                onDownload={handleDownloadSale}
             />
 
-            <BatchDetailsModal 
-                isOpen={isViewBatchModalOpen} 
-                plan={selectedBatchPlan} 
-                onClose={() => setIsViewBatchModalOpen(false)} 
-                onDownload={handleDownloadBatch} 
+            <BatchDetailsModal
+                isOpen={isViewBatchModalOpen}
+                plan={selectedBatchPlan}
+                onClose={() => setIsViewBatchModalOpen(false)}
+                onDownload={handleDownloadBatch}
             />
 
-            <TransferDetailsModal 
-                isOpen={isViewTransferModalOpen} 
-                transfer={selectedTransfer} 
-                onClose={() => setIsViewTransferModalOpen(false)} 
-                onDownload={handleDownloadTransfer} 
+            <TransferDetailsModal
+                isOpen={isViewTransferModalOpen}
+                transfer={selectedTransfer}
+                onClose={() => setIsViewTransferModalOpen(false)}
+                onDownload={handleDownloadTransfer}
             />
         </div>
     );

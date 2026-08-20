@@ -1,28 +1,34 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import ProjectionSection from './ProjectionSection';
 import BlueprintSection from './BlueprintSection';
-import { fetchProjection, fetchPlans, generatePlanApi, updatePlanStatusApi, deletePlanApi, updateItemBatchNumberApi } from '../../../services/productionPlanningService';
+import { fetchProjection, fetchPlans, generatePlanApi, updateProductionPlanApi, updatePlanStatusApi, deletePlanApi } from '../../../services/productionPlanningService';
+import { fetchBatchesApi } from '../../../services/batchService';
 
 function ProductionPlanningPage() {
-    const [masterFlavourList, setMasterFlavourList] = useState([]);
     const [accordions, setAccordions] = useState({ projection: true, blueprint: true, completed: true });
     const [projectionMatrix, setProjectionMatrix] = useState({});
-    const [batchNumberInput, setBatchNumberInput] = useState('');
+    const [allBatches, setAllBatches] = useState([]);
+    const [availableBatches, setAvailableBatches] = useState([]);
     const [expandedBlueprints, setExpandedBlueprints] = useState({});
     const [blueprintData, setBlueprintData] = useState({});
-    const [completedBatchList, setCompletedBatchList] = useState([]);
-    const [planIdMap, setPlanIdMap] = useState({});
-    const isExistingPlan = false;
+    const [editingPlan, setEditingPlan] = useState(null); // { planId, batchNumber }
 
-    const allFlavors = useMemo(() => masterFlavourList.map(f => f.name), [masterFlavourList]);
+    const allFlavors = useMemo(() => Object.keys(projectionMatrix), [projectionMatrix]);
 
     // Load Projections & Plans from backend
     const loadBackendData = useCallback(async () => {
         try {
-            const [projections, plans] = await Promise.all([
+            const [projections, plans, batchList] = await Promise.all([
                 fetchProjection().catch(() => null),
-                fetchPlans().catch(() => null)
+                fetchPlans().catch(() => null),
+                fetchBatchesApi().catch(() => [])
             ]);
+
+            if (batchList && Array.isArray(batchList)) {
+                setAllBatches(batchList);
+                const avail = batchList.filter(b => (Number(b.available) || 0) > 0);
+                setAvailableBatches(avail);
+            }
 
             if (projections !== null) {
                 // Pre-populate projection matrix from master list and pending orders
@@ -32,6 +38,7 @@ function ProductionPlanningPage() {
                         code: item.flavourCode,
                         opening: item.factoryStock || 0,
                         coldRoomStock: item.coldRoomStock || 0,
+                        inProcess: item.inProcessQuantity || 0,
                         orderVol: item.orderQuantity || 0,
                         production: 0
                     };
@@ -46,33 +53,30 @@ function ProductionPlanningPage() {
 
                 plans.forEach(plan => {
                     idMapping[plan.batchNumber] = plan.id;
-                    const dateKey = plan.planDate || new Date().toISOString().split('T')[0];
 
                     if (plan.status === 'Scheduled' || plan.status === 'In Production' || plan.status === 'Processing') {
-                        if (!blueprints[dateKey]) {
-                            blueprints[dateKey] = {
-                                id: dateKey,
-                                batchNumber: plan.batchNumber, // Fallback/default batch number representation
-                                processingDate: dateKey,
+                        const batchKey = plan.batchNumber ? String(plan.batchNumber).replace(/^BATCH-/i, '') : '100';
+                        if (!blueprints[batchKey]) {
+                            blueprints[batchKey] = {
+                                id: plan.id,
+                                batchNumber: batchKey,
+                                planDate: plan.planDate || new Date().toISOString().split('T')[0],
                                 flavours: {},
-                                planIds: [],
+                                planId: plan.id,
                                 status: plan.status
                             };
                         }
-                        
-                        blueprints[dateKey].planIds.push(plan.id);
 
                         if (plan.items) {
                             plan.items.forEach(item => {
                                 const name = item.flavour?.name || item.flavourCode;
-                                blueprints[dateKey].flavours[name] = {
+                                blueprints[batchKey].flavours[name] = {
                                     id: item.id,
                                     flavourCode: item.flavour?.code,
-                                    production: (blueprints[dateKey].flavours[name]?.production || 0) + (item.targetProduction || 0),
-                                    actualProduction: (blueprints[dateKey].flavours[name]?.actualProduction || 0) + (item.actualProduction !== undefined && item.actualProduction !== null ? item.actualProduction : (item.targetProduction || 0)),
-                                    coldRoomTransfer: blueprints[dateKey].flavours[name]?.coldRoomTransfer !== undefined && blueprints[dateKey].flavours[name]?.coldRoomTransfer !== null ?
-                                                      ((blueprints[dateKey].flavours[name]?.coldRoomTransfer || 0) + item.coldRoomTransfer) : 
-                                                      ((blueprints[dateKey].flavours[name]?.actualProduction || 0) + (item.actualProduction !== undefined && item.actualProduction !== null ? item.actualProduction : (item.targetProduction || 0))),
+                                    production: item.targetProduction || 0,
+                                    actualProduction: item.actualProduction !== undefined && item.actualProduction !== null ? item.actualProduction : (item.targetProduction || 0),
+                                    coldRoomTransfer: item.coldRoomTransfer !== undefined && item.coldRoomTransfer !== null ? item.coldRoomTransfer : 
+                                                      (item.actualProduction !== undefined && item.actualProduction !== null ? item.actualProduction : (item.targetProduction || 0)),
                                     batchNumber: item.batchNumber || plan.batchNumber,
                                     planId: plan.id,
                                     status: plan.status
@@ -106,11 +110,8 @@ function ProductionPlanningPage() {
                 });
 
                 setBlueprintData(blueprints);
-                setCompletedBatchList(completedList);
-                setPlanIdMap(idMapping);
             } else {
                 setBlueprintData({});
-                setCompletedBatchList([]);
             }
         } catch (err) {
             console.error("Error loading backend production planning data:", err);
@@ -128,45 +129,74 @@ function ProductionPlanningPage() {
         }));
     }, []);
 
-    const toggleBatchBand = useCallback((dateKey) => setExpandedBlueprints(prev => ({ ...prev, [dateKey]: !prev[dateKey] })), []);
+    const toggleBatchBand = useCallback((batchKey) => setExpandedBlueprints(prev => ({ ...prev, [batchKey]: !prev[batchKey] })), []);
 
-    const handleProductionChange = useCallback((flavor, val) => {
-        const numVal = parseFloat(val) || 0;
-        setProjectionMatrix(prev => ({ ...prev, [flavor]: { ...prev[flavor], production: numVal } }));
+    const handleProductionChange = useCallback((flavour, value) => {
+        setProjectionMatrix(prev => {
+            if (!prev[flavour]) return prev;
+            return {
+                ...prev,
+                [flavour]: { ...prev[flavour], production: value === '' ? '' : Number(value) }
+            };
+        });
     }, []);
 
-    const handleActualProductionChange = useCallback((dateKey, flavour, value) => {
-        const numValue = parseFloat(value) || 0;
+    const handleReset = useCallback(() => {
+        setEditingPlan(null);
+        setProjectionMatrix(prev => {
+            const resetMatrix = { ...prev };
+            Object.keys(resetMatrix).forEach(f => {
+                resetMatrix[f] = { ...resetMatrix[f], production: 0 };
+            });
+            return resetMatrix;
+        });
+    }, []);
+
+    const handleCancelEdit = useCallback(() => {
+        setEditingPlan(null);
+        setProjectionMatrix(prev => {
+            const resetMatrix = { ...prev };
+            Object.keys(resetMatrix).forEach(f => {
+                resetMatrix[f] = { ...resetMatrix[f], production: 0 };
+            });
+            return resetMatrix;
+        });
+    }, []);
+
+    const handleActualProductionChange = useCallback((batchKey, flavourName, value) => {
         setBlueprintData(prev => {
             const updatedBlueprint = { ...prev };
-            if (updatedBlueprint[dateKey] && updatedBlueprint[dateKey].flavours[flavour]) {
-                updatedBlueprint[dateKey].flavours[flavour].actualProduction = numValue;
+            if (updatedBlueprint[batchKey] && updatedBlueprint[batchKey].flavours[flavourName]) {
+                const item = updatedBlueprint[batchKey].flavours[flavourName];
+                const numericVal = value === '' ? '' : Number(value);
+                item.actualProduction = numericVal;
+                item.coldRoomTransfer = numericVal;
             }
             return updatedBlueprint;
         });
     }, []);
 
-    const handleColdRoomTransferChange = useCallback((dateKey, flavour, value) => {
-        const numValue = parseFloat(value) || 0;
+    const handleColdRoomTransferChange = useCallback((batchKey, flavourName, value) => {
         setBlueprintData(prev => {
             const updatedBlueprint = { ...prev };
-            if (updatedBlueprint[dateKey] && updatedBlueprint[dateKey].flavours[flavour]) {
-                updatedBlueprint[dateKey].flavours[flavour].coldRoomTransfer = numValue;
+            if (updatedBlueprint[batchKey] && updatedBlueprint[batchKey].flavours[flavourName]) {
+                updatedBlueprint[batchKey].flavours[flavourName].coldRoomTransfer = value === '' ? '' : Number(value);
             }
             return updatedBlueprint;
         });
     }, []);
 
-    const handleMoveAllToColdRoom = useCallback((dateKey, shouldMoveAll) => {
+    const handleMoveAllToColdRoom = useCallback((batchKey, checked) => {
         setBlueprintData(prev => {
             const updatedBlueprint = { ...prev };
-            const dateObj = updatedBlueprint[dateKey];
-            if (dateObj && dateObj.flavours) {
-                Object.keys(dateObj.flavours).forEach(f => {
-                    const item = dateObj.flavours[f];
-                    if (item) {
-                        const actual = item.actualProduction !== undefined && item.actualProduction !== null ? item.actualProduction : item.production;
-                        item.coldRoomTransfer = shouldMoveAll ? actual : 0;
+            if (updatedBlueprint[batchKey] && updatedBlueprint[batchKey].flavours) {
+                Object.keys(updatedBlueprint[batchKey].flavours).forEach(f => {
+                    const item = updatedBlueprint[batchKey].flavours[f];
+                    if (checked) {
+                        const actual = item.actualProduction !== undefined && item.actualProduction !== null ? item.actualProduction : (item.production || 0);
+                        item.coldRoomTransfer = actual;
+                    } else {
+                        item.coldRoomTransfer = 0;
                     }
                 });
             }
@@ -175,8 +205,6 @@ function ProductionPlanningPage() {
     }, []);
 
     const handleGeneratePlan = useCallback(async () => {
-        const trimmedBatch = batchNumberInput.trim() || 'NA';
-
         const itemsPayload = [];
         let hasActiveFlavors = false;
 
@@ -196,48 +224,67 @@ function ProductionPlanningPage() {
             return alert("Please enter production quantities (>0) for at least one flavour.");
         }
 
-        const payload = {
-            batchNumber: trimmedBatch,
-            items: itemsPayload
-        };
-
         try {
-            await generatePlanApi(payload);
-            setBatchNumberInput('');
-            await loadBackendData();
+            if (editingPlan && editingPlan.planId) {
+                // Update existing blueprint preserving batch number
+                await updateProductionPlanApi(editingPlan.planId, {
+                    planId: editingPlan.planId,
+                    batchNumber: editingPlan.batchNumber,
+                    items: itemsPayload
+                });
+                setEditingPlan(null);
+            } else {
+                const payload = {
+                    items: itemsPayload
+                };
+                const res = await generatePlanApi(payload);
+                // Auto-expand the newly generated plans
+                if (Array.isArray(res)) {
+                    const expanded = {};
+                    res.forEach(p => {
+                        if (p.batchNumber) expanded[p.batchNumber] = true;
+                    });
+                    setExpandedBlueprints(prev => ({ ...prev, ...expanded }));
+                }
+            }
             
-            // Auto-expand the newly generated plan's batch band
-            const newPlanDate = new Date().toISOString().split('T')[0];
-            setExpandedBlueprints(prev => ({ ...prev, [newPlanDate]: true }));
+            // Reset projection production matrix
+            setProjectionMatrix(prev => {
+                const next = { ...prev };
+                Object.keys(next).forEach(k => {
+                    next[k] = { ...next[k], production: 0 };
+                });
+                return next;
+            });
+
+            await loadBackendData();
             
         } catch (err) {
             console.error("Backend generatePlan error:", err);
-            alert("Error: Failed to generate production plan in database.");
+            alert(err.message || "Error: Failed to save/update production plan in database.");
         }
-    }, [batchNumberInput, projectionMatrix, loadBackendData]);
+    }, [projectionMatrix, editingPlan, loadBackendData]);
 
-    const handleUpdateBatchStatus = useCallback(async (dateKey, newStatus) => {
-        const dateObj = blueprintData[dateKey];
-        if (!dateObj || !dateObj.planIds || dateObj.planIds.length === 0) return;
+    const handleUpdateBatchStatus = useCallback(async (batchKey, newStatus) => {
+        const batchObj = blueprintData[batchKey];
+        if (!batchObj || !batchObj.planId) return;
 
         try {
-            for (const dbPlanId of dateObj.planIds) {
-                const itemsPayload = [];
-                Object.keys(dateObj.flavours).forEach(fName => {
-                    const item = dateObj.flavours[fName];
-                    if (item && item.planId === dbPlanId) {
-                        itemsPayload.push({
-                            flavourCode: item.flavourCode || allFlavors.find(fl => fl.name === fName)?.code || '',
-                            targetProduction: item.production || 0,
-                            actualProduction: item.actualProduction !== undefined && item.actualProduction !== '' ? Number(item.actualProduction) : (item.production || 0),
-                            coldRoomTransfer: item.coldRoomTransfer !== undefined && item.coldRoomTransfer !== '' ? Number(item.coldRoomTransfer) : 
-                                              (item.actualProduction !== undefined && item.actualProduction !== '' ? Number(item.actualProduction) : (item.production || 0))
-                        });
-                    }
-                });
+            const itemsPayload = [];
+            Object.keys(batchObj.flavours).forEach(fName => {
+                const item = batchObj.flavours[fName];
+                if (item) {
+                    itemsPayload.push({
+                        flavourCode: item.flavourCode || allFlavors.find(fl => fl.name === fName)?.code || '',
+                        targetProduction: item.production || 0,
+                        actualProduction: item.actualProduction !== undefined && item.actualProduction !== '' ? Number(item.actualProduction) : (item.production || 0),
+                        coldRoomTransfer: item.coldRoomTransfer !== undefined && item.coldRoomTransfer !== '' ? Number(item.coldRoomTransfer) : 
+                                          (item.actualProduction !== undefined && item.actualProduction !== '' ? Number(item.actualProduction) : (item.production || 0))
+                    });
+                }
+            });
 
-                await updatePlanStatusApi(dbPlanId, newStatus, itemsPayload);
-            }
+            await updatePlanStatusApi(batchObj.planId, newStatus, itemsPayload);
             await loadBackendData();
         } catch (err) {
             console.error("Backend status update error:", err);
@@ -245,16 +292,14 @@ function ProductionPlanningPage() {
         }
     }, [blueprintData, allFlavors, loadBackendData]);
 
-    const handleDeleteBlueprint = useCallback(async (dateKey) => {
-        const dateObj = blueprintData[dateKey];
-        if (!dateObj || !dateObj.planIds || dateObj.planIds.length === 0) return;
+    const handleDeleteBlueprint = useCallback(async (batchKey) => {
+        const batchObj = blueprintData[batchKey];
+        if (!batchObj || !batchObj.planId) return;
 
-        if (!window.confirm(`Are you sure you want to delete all plan blueprints for date '${dateKey}'?`)) return;
+        if (!window.confirm(`Are you sure you want to delete blueprint for batch '${batchKey}'?`)) return;
 
         try {
-            for (const dbPlanId of dateObj.planIds) {
-                await deletePlanApi(dbPlanId);
-            }
+            await deletePlanApi(batchObj.planId);
             await loadBackendData();
         } catch (err) {
             console.error("Backend deletePlan error:", err);
@@ -262,44 +307,33 @@ function ProductionPlanningPage() {
         }
     }, [blueprintData, loadBackendData]);
 
-    const handleEditMatrix = useCallback((dateKey) => {
-        const dateObj = blueprintData[dateKey];
-        if (!dateObj) return;
+    const handleEditMatrix = useCallback((batchKey) => {
+        const batchObj = blueprintData[batchKey];
+        if (!batchObj) return;
 
-        const firstBatchNo = Object.values(dateObj.flavours)[0]?.batchNumber || '';
-        setBatchNumberInput(firstBatchNo);
+        setEditingPlan({
+            planId: batchObj.planId,
+            batchNumber: batchObj.batchNumber
+        });
+
+        setAccordions(prev => ({ ...prev, projection: true }));
+        window.scrollTo({ top: 0, behavior: 'smooth' });
 
         setProjectionMatrix(prev => {
             const updated = { ...prev };
             Object.keys(updated).forEach(f => {
                 updated[f] = { ...updated[f], production: 0 };
             });
-            if (dateObj.flavours) {
-                Object.keys(dateObj.flavours).forEach(fName => {
+            if (batchObj.flavours) {
+                Object.keys(batchObj.flavours).forEach(fName => {
                     if (updated[fName]) {
-                        updated[fName].production = dateObj.flavours[fName].production || 0;
+                        updated[fName].production = batchObj.flavours[fName].production || 0;
                     }
                 });
             }
             return updated;
         });
     }, [blueprintData]);
-
-    const handleBatchNumberChange = useCallback(async (itemId, oldBatchNo, newBatchNumber) => {
-        try {
-            await updateItemBatchNumberApi(itemId, oldBatchNo, newBatchNumber);
-            await loadBackendData();
-        } catch (err) {
-            console.error("Backend updateItemBatchNumber error:", err);
-        }
-    }, [loadBackendData]);
-
-    const handleReset = useCallback(() => {
-        setBatchNumberInput('');
-        loadBackendData();
-    }, [loadBackendData]);
-
-
 
     const totals = useMemo(() => {
         let totalOpen = 0;
@@ -309,7 +343,7 @@ function ProductionPlanningPage() {
 
         Object.keys(projectionMatrix).forEach(f => {
             const data = projectionMatrix[f];
-            const opening = (data.opening || 0) + (data.coldRoomStock || 0);
+            const opening = (data.opening || 0) + (data.coldRoomStock || 0) + (data.inProcess || 0);
             const orderVol = data.orderVol || 0;
             const production = data.production || 0;
             const closing = opening + production - orderVol;
@@ -348,11 +382,11 @@ function ProductionPlanningPage() {
                 allFlavors={allFlavors}
                 totals={totals}
                 handleProductionChange={handleProductionChange}
-                batchNumberInput={batchNumberInput}
-                setBatchNumberInput={setBatchNumberInput}
+                availableBatches={availableBatches}
                 handleGeneratePlan={handleGeneratePlan}
                 handleReset={handleReset}
-                isExistingPlan={isExistingPlan}
+                editingPlan={editingPlan}
+                handleCancelEdit={handleCancelEdit}
             />
 
             <BlueprintSection
@@ -360,6 +394,7 @@ function ProductionPlanningPage() {
                 toggleAccordion={toggleAccordion}
                 plannedBatches={blueprintData}
                 expandedBatches={expandedBlueprints}
+                batches={allBatches}
                 toggleBatchBand={toggleBatchBand}
                 handleEditMatrix={handleEditMatrix}
                 handleDeleteBlueprint={handleDeleteBlueprint}
@@ -367,7 +402,6 @@ function ProductionPlanningPage() {
                 handleColdRoomTransferChange={handleColdRoomTransferChange}
                 handleMoveAllToColdRoom={handleMoveAllToColdRoom}
                 handleBatchComplete={handleUpdateBatchStatus}
-                handleBatchNumberChange={handleBatchNumberChange}
             />
         </div>
     );

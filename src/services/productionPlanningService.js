@@ -30,6 +30,20 @@ export const generatePlanApi = async (payload) => {
     return response.json();
 };
 
+export const updateProductionPlanApi = async (planId, payload) => {
+    const response = await fetch(`${API_BASE_URL}/plans/${planId}`, {
+        method: 'PUT',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+        throw new Error(`Failed to update production plan: ${response.statusText}`);
+    }
+    return response.json();
+};
+
 export const updatePlanStatusApi = async (planId, status, items) => {
     const response = await fetch(`${API_BASE_URL}/plans/${planId}/status?status=${encodeURIComponent(status)}`, {
         method: 'PUT',
