@@ -3,10 +3,13 @@ import ProjectionSection from './ProjectionSection';
 import BlueprintSection from './BlueprintSection';
 import { fetchProjection, fetchPlans, generatePlanApi, updateProductionPlanApi, updatePlanStatusApi, deletePlanApi } from '../../../services/productionPlanningService';
 import { fetchBatchesApi } from '../../../services/batchService';
+import { fetchAdminDashboard } from '../../../services/adminService';
 
 function ProductionPlanningPage() {
     const [accordions, setAccordions] = useState({ projection: true, blueprint: true, completed: true });
     const [projectionMatrix, setProjectionMatrix] = useState({});
+    const [masterFlavours, setMasterFlavours] = useState([]);
+    const [targetBatchNo, setTargetBatchNo] = useState('');
     const [allBatches, setAllBatches] = useState([]);
     const [availableBatches, setAvailableBatches] = useState([]);
     const [expandedBlueprints, setExpandedBlueprints] = useState({});
@@ -18,11 +21,16 @@ function ProductionPlanningPage() {
     // Load Projections & Plans from backend
     const loadBackendData = useCallback(async () => {
         try {
-            const [projections, plans, batchList] = await Promise.all([
+            const [projections, plans, batchList, adminData] = await Promise.all([
                 fetchProjection().catch(() => null),
                 fetchPlans().catch(() => null),
-                fetchBatchesApi().catch(() => [])
+                fetchBatchesApi().catch(() => []),
+                fetchAdminDashboard().catch(() => null)
             ]);
+
+            if (adminData && adminData.flavourList) {
+                setMasterFlavours(adminData.flavourList);
+            }
 
             if (batchList && Array.isArray(batchList)) {
                 setAllBatches(batchList);
@@ -40,7 +48,8 @@ function ProductionPlanningPage() {
                         coldRoomStock: item.coldRoomStock || 0,
                         inProcess: item.inProcessQuantity || 0,
                         orderVol: item.orderQuantity || 0,
-                        production: 0
+                        production: 0,
+                        batchNumber: ''
                     };
                 });
                 setProjectionMatrix(matrix);
@@ -134,19 +143,51 @@ function ProductionPlanningPage() {
     const handleProductionChange = useCallback((flavour, value) => {
         setProjectionMatrix(prev => {
             if (!prev[flavour]) return prev;
+            const numVal = value === '' ? '' : Number(value);
+            const currentBatch = prev[flavour].batchNumber;
+            let newBatch = currentBatch;
+            if (Number(numVal) > 0 && (!currentBatch || currentBatch.trim() === '')) {
+                newBatch = targetBatchNo;
+            } else if (Number(numVal) <= 0) {
+                newBatch = '';
+            }
             return {
                 ...prev,
-                [flavour]: { ...prev[flavour], production: value === '' ? '' : Number(value) }
+                [flavour]: { ...prev[flavour], production: numVal, batchNumber: newBatch }
+            };
+        });
+    }, [targetBatchNo]);
+
+    const handleTargetBatchChange = useCallback((val) => {
+        setTargetBatchNo(val);
+        setProjectionMatrix(prev => {
+            const next = { ...prev };
+            Object.keys(next).forEach(f => {
+                if ((Number(next[f].production) || 0) > 0) {
+                    next[f] = { ...next[f], batchNumber: val };
+                }
+            });
+            return next;
+        });
+    }, []);
+
+    const handleBatchNumberChange = useCallback((flavour, batchVal) => {
+        setProjectionMatrix(prev => {
+            if (!prev[flavour]) return prev;
+            return {
+                ...prev,
+                [flavour]: { ...prev[flavour], batchNumber: batchVal }
             };
         });
     }, []);
 
     const handleReset = useCallback(() => {
         setEditingPlan(null);
+        setTargetBatchNo('');
         setProjectionMatrix(prev => {
             const resetMatrix = { ...prev };
             Object.keys(resetMatrix).forEach(f => {
-                resetMatrix[f] = { ...resetMatrix[f], production: 0 };
+                resetMatrix[f] = { ...resetMatrix[f], production: 0, batchNumber: '' };
             });
             return resetMatrix;
         });
@@ -154,12 +195,82 @@ function ProductionPlanningPage() {
 
     const handleCancelEdit = useCallback(() => {
         setEditingPlan(null);
+        setTargetBatchNo('');
         setProjectionMatrix(prev => {
             const resetMatrix = { ...prev };
             Object.keys(resetMatrix).forEach(f => {
-                resetMatrix[f] = { ...resetMatrix[f], production: 0 };
+                resetMatrix[f] = { ...resetMatrix[f], production: 0, batchNumber: '' };
             });
             return resetMatrix;
+        });
+    }, []);
+
+    const handleAddSurplusFlavour = useCallback((flavourObj) => {
+        if (!flavourObj) return;
+        const rawObj = flavourObj.raw || flavourObj;
+        const fCode = rawObj.code || flavourObj.code;
+        const fName = rawObj.name || flavourObj.name;
+        if (!fName && !fCode) return;
+
+        // Lookup in masterFlavours list to ensure latest live balances
+        const masterMatch = masterFlavours.find(mf =>
+            (fCode && mf.code?.toLowerCase() === fCode.toLowerCase()) ||
+            (fName && mf.name?.toLowerCase() === fName.toLowerCase())
+        );
+
+        const targetName = masterMatch ? masterMatch.name : (fName || fCode);
+        const targetCode = masterMatch ? masterMatch.code : (fCode || fName);
+        const factoryStock = masterMatch ? (masterMatch.factoryStock || 0) : (rawObj.factoryStock || 0);
+        const coldRoomStock = masterMatch ? (masterMatch.coldRoomStock || 0) : (rawObj.coldRoomStock || 0);
+        const inProcess = masterMatch ? (masterMatch.inProcessStock || masterMatch.inProcessQuantity || 0) : (rawObj.inProcessQuantity || rawObj.inProcessStock || 0);
+
+        setProjectionMatrix(prev => {
+            if (prev[targetName]) {
+                return {
+                    ...prev,
+                    [targetName]: {
+                        ...prev[targetName],
+                        opening: prev[targetName].opening !== undefined && prev[targetName].opening !== 0 ? prev[targetName].opening : factoryStock,
+                        coldRoomStock: prev[targetName].coldRoomStock !== undefined && prev[targetName].coldRoomStock !== 0 ? prev[targetName].coldRoomStock : coldRoomStock,
+                        inProcess: prev[targetName].inProcess !== undefined && prev[targetName].inProcess !== 0 ? prev[targetName].inProcess : inProcess,
+                        isSurplus: true,
+                        batchNumber: prev[targetName].batchNumber || targetBatchNo || ''
+                    }
+                };
+            }
+            return {
+                ...prev,
+                [targetName]: {
+                    code: targetCode,
+                    opening: factoryStock,
+                    coldRoomStock: coldRoomStock,
+                    inProcess: inProcess,
+                    orderVol: 0,
+                    production: 0,
+                    batchNumber: targetBatchNo || '',
+                    isSurplus: true
+                }
+            };
+        });
+    }, [masterFlavours, targetBatchNo]);
+
+    const handleRemoveSurplusFlavour = useCallback((flavourName) => {
+        setProjectionMatrix(prev => {
+            if (!prev[flavourName]) return prev;
+            if (Number(prev[flavourName].orderVol) <= 0) {
+                const next = { ...prev };
+                delete next[flavourName];
+                return next;
+            }
+            return {
+                ...prev,
+                [flavourName]: {
+                    ...prev[flavourName],
+                    production: 0,
+                    batchNumber: '',
+                    isSurplus: false
+                }
+            };
         });
     }, []);
 
@@ -207,21 +318,32 @@ function ProductionPlanningPage() {
     const handleGeneratePlan = useCallback(async () => {
         const itemsPayload = [];
         let hasActiveFlavors = false;
+        const missingBatchFlavours = [];
 
         Object.keys(projectionMatrix).forEach(f => {
             const data = projectionMatrix[f];
             const targetProd = Number(data.production) || 0;
             if (targetProd > 0) {
                 hasActiveFlavors = true;
-                itemsPayload.push({
-                    flavourCode: data.code || f.substring(0, 2).toUpperCase(),
-                    targetProduction: targetProd
-                });
+                const rowBatch = data.batchNumber ? String(data.batchNumber).trim() : (targetBatchNo ? String(targetBatchNo).trim() : '');
+                if (!rowBatch) {
+                    missingBatchFlavours.push(f);
+                } else {
+                    itemsPayload.push({
+                        flavourCode: data.code || f.substring(0, 2).toUpperCase(),
+                        targetProduction: targetProd,
+                        batchNumber: rowBatch
+                    });
+                }
             }
         });
 
         if (!hasActiveFlavors) {
             return alert("Please enter production quantities (>0) for at least one flavour.");
+        }
+
+        if (missingBatchFlavours.length > 0) {
+            return alert(`Please specify a valid Batch Number for: ${missingBatchFlavours.join(', ')}`);
         }
 
         try {
@@ -235,6 +357,7 @@ function ProductionPlanningPage() {
                 setEditingPlan(null);
             } else {
                 const payload = {
+                    batchNumber: targetBatchNo || undefined,
                     items: itemsPayload
                 };
                 const res = await generatePlanApi(payload);
@@ -248,11 +371,12 @@ function ProductionPlanningPage() {
                 }
             }
             
-            // Reset projection production matrix
+            // Reset projection production matrix and target batch
+            setTargetBatchNo('');
             setProjectionMatrix(prev => {
                 const next = { ...prev };
                 Object.keys(next).forEach(k => {
-                    next[k] = { ...next[k], production: 0 };
+                    next[k] = { ...next[k], production: 0, batchNumber: '' };
                 });
                 return next;
             });
@@ -263,7 +387,7 @@ function ProductionPlanningPage() {
             console.error("Backend generatePlan error:", err);
             alert(err.message || "Error: Failed to save/update production plan in database.");
         }
-    }, [projectionMatrix, editingPlan, loadBackendData]);
+    }, [projectionMatrix, targetBatchNo, editingPlan, loadBackendData]);
 
     const handleUpdateBatchStatus = useCallback(async (batchKey, newStatus) => {
         const batchObj = blueprintData[batchKey];
@@ -343,15 +467,22 @@ function ProductionPlanningPage() {
 
         Object.keys(projectionMatrix).forEach(f => {
             const data = projectionMatrix[f];
-            const opening = (data.opening || 0) + (data.coldRoomStock || 0) + (data.inProcess || 0);
-            const orderVol = data.orderVol || 0;
-            const production = data.production || 0;
-            const closing = opening + production - orderVol;
+            if (!data) return;
+            const coldRoom = Number(data.coldRoomStock) || 0;
+            const inProc = Number(data.inProcess) || 0;
+            const orderVol = Number(data.orderVol) || 0;
+            const production = Number(data.production) || 0;
+            const isShortfall = (coldRoom + inProc) < orderVol;
 
-            totalOpen += opening;
-            totalOrder += orderVol;
-            totalClose += closing;
-            totalProd += production;
+            if (data.isSurplus || isShortfall || production > 0) {
+                const opening = (data.opening || 0) + coldRoom + inProc;
+                const closing = opening + production - orderVol;
+
+                totalOpen += opening;
+                totalOrder += orderVol;
+                totalClose += closing;
+                totalProd += production;
+            }
         });
 
         return {
@@ -380,8 +511,15 @@ function ProductionPlanningPage() {
                 toggleAccordion={toggleAccordion}
                 projectionMatrix={projectionMatrix}
                 allFlavors={allFlavors}
+                masterFlavours={masterFlavours}
                 totals={totals}
                 handleProductionChange={handleProductionChange}
+                targetBatchNo={targetBatchNo}
+                handleTargetBatchChange={handleTargetBatchChange}
+                handleBatchNumberChange={handleBatchNumberChange}
+                handleAddSurplusFlavour={handleAddSurplusFlavour}
+                handleRemoveSurplusFlavour={handleRemoveSurplusFlavour}
+                allBatches={allBatches}
                 availableBatches={availableBatches}
                 handleGeneratePlan={handleGeneratePlan}
                 handleReset={handleReset}

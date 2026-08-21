@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
     fetchAllSaleOrders,
     completeSaleOrderApi,
@@ -14,6 +15,7 @@ import AutocompleteInput from '../../../components/common/AutocompleteInput';
 import DispatchModal from './DispatchModal';
 
 function SalePage() {
+    const navigate = useNavigate();
     const [originalItems, setOriginalItems] = useState([]);
     const [showWarningModal, setShowWarningModal] = useState(false);
     const [warningPayload, setWarningPayload] = useState(null);
@@ -98,15 +100,10 @@ function SalePage() {
     // 🚚 Confirm & Dispatch Order
     const handleConfirmDispatch = async (payload) => {
         if (!selectedDispatchOrder) return;
-        try {
-            await dispatchOrderApi(selectedDispatchOrder.id, payload);
-            setIsDispatchModalOpen(false);
-            setSelectedDispatchOrder(null);
-            await loadBackendData();
-        } catch (err) {
-            console.error("Error dispatching order:", err);
-            alert("Dispatch failed: " + err.message);
-        }
+        await dispatchOrderApi(selectedDispatchOrder.id, payload);
+        setIsDispatchModalOpen(false);
+        setSelectedDispatchOrder(null);
+        await loadBackendData();
     };
 
     // ✏️ Convert to Sale (Mark Completed)
@@ -378,11 +375,15 @@ function SalePage() {
                 await loadBackendData();
                 setIsModalOpen(false);
                 setShowWarningModal(false);
+                navigate('/store-orders');
             } catch (err) {
                 console.error("Error updating order to pending", err);
+                setShowWarningModal(false);
+                navigate('/store-orders');
             }
         } else {
             setShowWarningModal(false);
+            navigate('/store-orders');
         }
     };
 

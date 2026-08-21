@@ -54,7 +54,12 @@ function BatchesPage() {
         return batches.filter(batch => {
             const matchesSearch = !searchQuery || batch.batchNumber.toLowerCase().includes(searchQuery.toLowerCase());
             const matchesDate = !filterDate || batch.createdDate === filterDate;
-            return matchesSearch && matchesDate;
+            
+            const active = Number(batch.active !== undefined ? batch.active : (batch.inProcess || 0));
+            const available = Number(batch.available !== undefined ? batch.available : 0);
+            const isCompleted = (available === 0 && active === 0);
+
+            return matchesSearch && matchesDate && !isCompleted;
         }).sort((a, b) => {
             if (!sortConfig.key) return 0;
             let valA = a[sortConfig.key];
@@ -263,13 +268,16 @@ function BatchesPage() {
                         <th className="sortable" onClick={() => handleSort('deficit')} style={{ textAlign: 'center' }}>
                             Pending {sortConfig.key === 'deficit' && (sortConfig.direction === 'asc' ? '▲' : '▼')}
                         </th>
+                        <th className="sortable" onClick={() => handleSort('status')} style={{ textAlign: 'center' }}>
+                            Status {sortConfig.key === 'status' && (sortConfig.direction === 'asc' ? '▲' : '▼')}
+                        </th>
                         <th>Actions</th>
                     </tr>
                 </thead>
                 <tbody>
                     {filteredBatches.length === 0 ? (
                         <tr>
-                            <td colSpan="8" style={{ textAlign: 'center', padding: '30px 20px', color: 'var(--ink-soft)', fontStyle: 'italic' }}>
+                            <td colSpan="9" style={{ textAlign: 'center', padding: '30px 20px', color: 'var(--ink-soft)', fontStyle: 'italic' }}>
                                 No batches found. Click <strong>+ Add New Batch</strong> to create one.
                             </td>
                         </tr>
@@ -303,6 +311,61 @@ function BatchesPage() {
                                     </td>
                                     <td style={{ textAlign: 'center', fontWeight: 700, fontSize: '14px', color: deficit > 0 ? '#DC2626' : 'var(--ink-soft)' }}>
                                         {deficit}
+                                    </td>
+                                    <td style={{ textAlign: 'center' }}>
+                                        {deficit > 0 ? (
+                                            <span style={{
+                                                background: '#FEF2F2',
+                                                color: '#DC2626',
+                                                border: '1px solid #FCA5A5',
+                                                padding: '3px 8px',
+                                                borderRadius: '4px',
+                                                fontSize: '11px',
+                                                fontWeight: 700,
+                                                whiteSpace: 'nowrap'
+                                            }}>
+                                                Pending
+                                            </span>
+                                        ) : totalConsumed === 0 ? (
+                                            <span style={{
+                                                background: '#F0FDF4',
+                                                color: '#16A34A',
+                                                border: '1px solid #BBF7D0',
+                                                padding: '3px 8px',
+                                                borderRadius: '4px',
+                                                fontSize: '11px',
+                                                fontWeight: 700,
+                                                whiteSpace: 'nowrap'
+                                            }}>
+                                                Available
+                                            </span>
+                                        ) : batch.available > 0 ? (
+                                            <span style={{
+                                                background: '#EFF6FF',
+                                                color: '#2563EB',
+                                                border: '1px solid #BFDBFE',
+                                                padding: '3px 8px',
+                                                borderRadius: '4px',
+                                                fontSize: '11px',
+                                                fontWeight: 700,
+                                                whiteSpace: 'nowrap'
+                                            }}>
+                                                Active
+                                            </span>
+                                        ) : (
+                                            <span style={{
+                                                background: '#F1F5F9',
+                                                color: '#64748B',
+                                                border: '1px solid #CBD5E1',
+                                                padding: '3px 8px',
+                                                borderRadius: '4px',
+                                                fontSize: '11px',
+                                                fontWeight: 700,
+                                                whiteSpace: 'nowrap'
+                                            }}>
+                                                Completed
+                                            </span>
+                                        )}
                                     </td>
                                     <td className="actions-cell">
                                         <button
